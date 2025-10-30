@@ -26,17 +26,23 @@ jobs:
         run: |
           pip install uv maturin
 
+      - name: Create virtual environment and install dependencies
+        run: |
+          uv sync
+
       - name: Build Rust extension with Maturin
         run: |
+          source .venv/bin/activate
           maturin develop
 
-      - name: Install dependencies
+      - name: Install additional dependencies
         run: |
-          uv pip install -e .
-          uv pip install opencv-python-headless
+          source .venv/bin/activate
+          pip install opencv-python-headless
 
       - name: Generate pipeline visualizations
         run: |
+          source .venv/bin/activate
           python examples/visualize_pipeline.py \
             --output-dir examples/visual_outputs/pipeline_stages \
             --class-counts person:2,car:1 \
@@ -45,7 +51,7 @@ jobs:
 
       - name: Upload visualization outputs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pipeline-visualizations
           path: examples/visual_outputs/pipeline_stages/
