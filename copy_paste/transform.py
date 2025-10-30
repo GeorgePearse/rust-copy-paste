@@ -24,17 +24,29 @@ class CopyPasteAugmentation(A.DualTransform):
     Albumentations' DualTransform interface.
 
     Args:
-        image_width: Width of output images
-        image_height: Height of output images
-        max_paste_objects: Maximum number of objects to paste per image
-        use_rotation: Whether to apply random rotation
-        use_scaling: Whether to apply random scaling
-        rotation_range: Range of rotation in degrees (min, max)
-        scale_range: Range of scaling factors (min, max)
-        use_random_background: Whether to generate random background
-        blend_mode: Blending mode ('normal' or 'xray')
-        object_counts: Dict mapping class_id to exact count of objects to paste per class
-        p: Probability of applying the transform (0.0 to 1.0)
+        image_width: Width of output images (default: 512)
+        image_height: Height of output images (default: 512)
+        max_paste_objects: Maximum number of objects to paste per image (default: 1)
+        use_rotation: Whether to apply random rotation (default: True)
+        use_scaling: Whether to apply random scaling (default: True)
+        rotation_range: Range of rotation in degrees (min, max). Default: (-30.0, 30.0)
+        scale_range: Range of scaling factors (min, max). Default: (0.8, 1.2)
+        use_random_background: Whether to generate random background (default: False)
+        blend_mode: Blending mode ('normal' or 'xray'). Default: 'normal'
+        object_counts: Dictionary mapping class names (str) to exact count of objects
+                      to paste per class. Example: {'person': 2, 'car': 1}
+                      (default: {})
+        p: Probability of applying the transform (0.0 to 1.0) (default: 1.0)
+
+    Example:
+        >>> transform = CopyPasteAugmentation(
+        ...     image_width=512,
+        ...     image_height=512,
+        ...     object_counts={'person': 2, 'car': 1},
+        ...     use_rotation=True,
+        ...     use_scaling=True
+        ... )
+        >>> augmented = transform(image=img, mask=mask)
     """
 
     def __init__(
@@ -48,13 +60,14 @@ class CopyPasteAugmentation(A.DualTransform):
         scale_range: tuple[float, float] = (0.8, 1.2),
         use_random_background: bool = False,
         blend_mode: str = "normal",
-        object_counts: dict[int, int] | None = None,
+        object_counts: dict[str, int] | None = None,
         p: float = 1.0,
     ):
         """Initialize the CopyPasteAugmentation transform.
 
         Args:
-            object_counts: Optional dict mapping class_id to exact number of objects to paste.
+            object_counts: Optional dict mapping class names (str) to exact number of objects
+                          to paste per class. Example: {'person': 2, 'car': 1}
                           If None, no per-class count constraint is applied.
         """
         super().__init__(p=p)
