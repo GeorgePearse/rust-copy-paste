@@ -3,7 +3,7 @@ name = "copy_paste"
 version = "0.1.0"
 description = "Rust-based copy-paste augmentation for object detection with Albumentations integration"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "numpy>=2.0.0",
     "albumentations>=1.4.0",
@@ -25,5 +25,4 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
-python-source = "python"
 module-name = "copy_paste._core"

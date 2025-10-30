@@ -5,9 +5,9 @@ mod affine;
 mod blending;
 mod collision;
 
-/// Python module for copy-paste augmentation
+/// Python module for copy-paste augmentation (_core submodule)
 #[pymodule]
-fn copy_paste(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CopyPasteTransform>()?;
     m.add_class::<ObjectPaste>()?;
     Ok(())
