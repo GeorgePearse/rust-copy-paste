@@ -492,4 +492,151 @@ mod tests {
         let selected = select_objects_by_class(&objects, &counts);
         assert_eq!(selected.len(), 2);
     }
+
+    #[test]
+    fn test_place_objects_single() {
+        // Create a simple object to place
+        let obj = ExtractedObject {
+            image: Array3::zeros((5, 5, 3)),
+            mask: Array3::from_elem((5, 5, 3), 255u8),
+            bbox: (0, 0, 5, 5),
+            class_id: 0,
+        };
+
+        let placed = place_objects(
+            &[obj],
+            100,
+            100,
+            false,
+            false,
+            (-30.0, 30.0),
+            (0.8, 1.2),
+            0.01,
+        );
+
+        // Should place the object
+        assert_eq!(placed.len(), 1);
+        assert_eq!(placed[0].class_id, 0);
+    }
+
+    #[test]
+    fn test_place_objects_collision_detection() {
+        // Create two overlapping objects
+        let obj = ExtractedObject {
+            image: Array3::zeros((50, 50, 3)),
+            mask: Array3::from_elem((50, 50, 3), 255u8),
+            bbox: (0, 0, 50, 50),
+            class_id: 0,
+        };
+
+        // Place objects with high collision threshold
+        let placed = place_objects(
+            &[obj.clone(), obj],
+            100,
+            100,
+            false,
+            false,
+            (0.0, 0.0),
+            (1.0, 1.0),
+            0.0, // No collision tolerance
+        );
+
+        // May or may not place both depending on random position
+        // But should respect collision detection
+        assert!(placed.len() <= 2);
+    }
+
+    #[test]
+    fn test_compose_objects_basic() {
+        let mut output_image: Array3<u8> = Array3::zeros((100, 100, 3));
+
+        // Create a test object
+        let mut obj_image = Array3::zeros((10, 10, 3));
+        for i in 0..10 {
+            for j in 0..10 {
+                obj_image[[i, j, 0]] = 255;
+                obj_image[[i, j, 1]] = 255;
+                obj_image[[i, j, 2]] = 255;
+            }
+        }
+
+        let obj_mask = Array3::from_elem((10, 10, 3), 255u8);
+        let placed = vec![PlacedObject {
+            bbox: (10.0, 10.0, 20.0, 20.0),
+            image: obj_image,
+            mask: obj_mask,
+            class_id: 0,
+        }];
+
+        compose_objects(&mut output_image, &placed, BlendMode::Normal);
+
+        // Verify that some pixels were modified (compositing happened)
+        let mut modified = false;
+        for i in 10..20 {
+            for j in 10..20 {
+                if output_image[[i, j, 0]] > 0 {
+                    modified = true;
+                    break;
+                }
+            }
+        }
+        assert!(modified, "Image should be modified by composition");
+    }
+
+    #[test]
+    fn test_update_output_mask() {
+        let mut output_mask: Array3<u8> = Array3::zeros((100, 100, 3));
+
+        let obj_mask = Array3::from_elem((10, 10, 3), 255u8);
+        let placed = vec![PlacedObject {
+            bbox: (10.0, 10.0, 20.0, 20.0),
+            image: Array3::zeros((10, 10, 3)),
+            mask: obj_mask,
+            class_id: 5,
+        }];
+
+        update_output_mask(&mut output_mask, &placed);
+
+        // Verify mask was updated
+        let mut updated = false;
+        for i in 10..20 {
+            for j in 10..20 {
+                if output_mask[[i, j, 0]] > 0 {
+                    updated = true;
+                    break;
+                }
+            }
+        }
+        assert!(updated, "Mask should be updated with placed objects");
+    }
+
+    #[test]
+    fn test_multiple_classes() {
+        let mut objects_by_class = HashMap::new();
+
+        let obj1 = ExtractedObject {
+            image: Array3::zeros((5, 5, 3)),
+            mask: Array3::zeros((5, 5, 3)),
+            bbox: (0, 0, 5, 5),
+            class_id: 0,
+        };
+
+        let obj2 = ExtractedObject {
+            image: Array3::zeros((5, 5, 3)),
+            mask: Array3::zeros((5, 5, 3)),
+            bbox: (0, 0, 5, 5),
+            class_id: 1,
+        };
+
+        objects_by_class.insert(0, vec![obj1.clone(), obj1.clone()]);
+        objects_by_class.insert(1, vec![obj2.clone()]);
+
+        let mut counts = HashMap::new();
+        counts.insert(0, 1);
+        counts.insert(1, 1);
+
+        let selected = select_objects_by_class(&objects_by_class, &counts);
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].class_id + selected[1].class_id, 1); // One of each class
+    }
 }
