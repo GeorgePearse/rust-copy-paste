@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>rust-copy-paste Metrics</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 rust-copy-paste Performance Metrics</h1>
+            <p class="subtitle">Automated benchmarks on every merge to master</p>
+        </header>
+
+        <div class="info-panel">
+            <div class="stat-box">
+                <div class="stat-label">Total Runs</div>
+                <div class="stat-value" id="totalRuns">-</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Latest Commit</div>
+                <div class="stat-value" id="latestCommit">-</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Last Updated</div>
+                <div class="stat-value" id="lastUpdated">-</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <label>
+                <input type="checkbox" id="normalizeCheckbox" onchange="updateCharts()">
+                Normalize to first value
+            </label>
+            <label>
+                <input type="checkbox" id="smoothCheckbox" onchange="updateCharts()">
+                Smooth values
+            </label>
+            <button onclick="downloadMetrics()">📥 Download Metrics</button>
+        </div>
+
+        <section class="chart-section">
+            <h2>Processing Time (ms)</h2>
+            <p class="subtitle">Lower is better</p>
+            <div id="timeChart"></div>
+        </section>
+
+        <section class="chart-section">
+            <h2>Throughput (images/second)</h2>
+            <p class="subtitle">Higher is better</p>
+            <div id="throughputChart"></div>
+        </section>
+
+        <section class="chart-section">
+            <h2>Performance Comparison by Scenario</h2>
+            <p class="subtitle">Latest metrics by scenario</p>
+            <div id="comparisonChart"></div>
+        </section>
+
+        <section class="chart-section">
+            <h2>Maximum Processing Time</h2>
+            <p class="subtitle">P100 latency</p>
+            <div id="maxTimeChart"></div>
+        </section>
+
+        <footer>
+            <p>
+                🔗 <a href="https://github.com/GeorgePearse/rust-copy-paste">GitHub Repository</a> |
+                📊 <a href="https://github.com/GeorgePearse/rust-copy-paste/blob/master/metrics/metrics.json">Raw Metrics</a>
+            </p>
+            <p style="font-size: 0.9em; color: #666;">
+                Metrics are collected automatically on every push to master using GitHub Actions.
+                Benchmarks are run on ubuntu-latest with pytest-benchmark.
+            </p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
