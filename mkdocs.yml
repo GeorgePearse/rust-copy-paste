@@ -1,6 +1,7 @@
 site_name: Copy-Paste Augmentation
 site_description: Rust-based copy-paste augmentation for object detection with Albumentations integration
 site_author: George Pearse
+site_url: https://georgepearse.github.io/rust-copy-paste/
 repo_url: https://github.com/GeorgePearse/rust-copy-paste
 repo_name: rust-copy-paste
 
