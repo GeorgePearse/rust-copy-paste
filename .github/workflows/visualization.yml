@@ -45,7 +45,7 @@ jobs:
 
       - name: Upload visualization outputs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pipeline-visualizations
           path: examples/visual_outputs/pipeline_stages/
