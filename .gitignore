@@ -62,3 +62,11 @@ htmlcov/
 # Benchmarks
 benchmarks/.benchmarks/
 *.json.bak
+
+# Generated example outputs
+examples/visual_outputs/pipeline_stages/
+examples/visual_outputs/**/*.jpg
+examples/visual_outputs/**/*.png
+
+# uv lock file (regenerated on install)
+uv.lock

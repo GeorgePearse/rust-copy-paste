@@ -112,13 +112,25 @@ def extract_bboxes_from_mask(mask: np.ndarray) -> Tuple[List[Tuple], List[int]]:
     """Extract bounding boxes from segmentation mask.
 
     Args:
-        mask: Segmentation mask (H, W) with class IDs
+        mask: Segmentation mask (H, W) or (H, W, C) with class IDs
 
     Returns:
         Tuple of (bboxes, class_ids) where bboxes are (x_min, y_min, x_max, y_max)
     """
     bboxes = []
     class_ids = []
+
+    # Convert to single-channel if multi-channel
+    if mask.ndim == 3:
+        # If 3-channel, take first channel or convert from BGR
+        if mask.shape[2] == 3:
+            # For BGR masks, convert to grayscale or just use first channel
+            mask = mask[:, :, 0].astype(np.uint8)
+        else:
+            mask = mask[:, :, 0].astype(np.uint8)
+    else:
+        # Ensure single-channel is uint8
+        mask = mask.astype(np.uint8)
 
     # Find unique class IDs in mask (excluding background 0)
     unique_classes = np.unique(mask)
@@ -211,7 +223,6 @@ def visualize_pipeline(
         config = {
             'image_width': input_image.shape[1],
             'image_height': input_image.shape[0],
-            'object_counts': object_counts,
             'use_rotation': True,
             'use_scaling': True,
             'rotation_range': (-15, 15),
@@ -219,8 +230,30 @@ def visualize_pipeline(
             'blend_mode': 'normal',
         }
 
+        # Try to add object_counts if supported by the current build
+        try:
+            import inspect
+            sig = inspect.signature(CopyPasteAugmentation.__init__)
+            if 'object_counts' in sig.parameters:
+                config['object_counts'] = object_counts
+                print("   ✓ Using per-class object counts")
+            else:
+                print("   ⚠ object_counts not available in current build (rebuild with maturin develop)")
+        except Exception as e:
+            print(f"   ⚠ Could not check for object_counts parameter: {e}")
+
     # Initialize transform
-    transform = CopyPasteAugmentation(**config)
+    try:
+        transform = CopyPasteAugmentation(**config)
+    except TypeError as e:
+        if 'object_counts' in str(e):
+            # Fallback: remove object_counts if not supported
+            config.pop('object_counts', None)
+            print("   ⚠ Removing unsupported object_counts parameter, rebuilding with:")
+            print("      maturin develop")
+            transform = CopyPasteAugmentation(**config)
+        else:
+            raise
 
     # Step 1: Save input image with original bounding boxes
     print("\n[1] Extracting objects from input mask...")
@@ -240,9 +273,19 @@ def visualize_pipeline(
 
     # Step 2: Apply augmentation
     print("\n[2] Applying copy-paste augmentation...")
-    augmented = transform(image=input_image, mask=input_mask)
-    augmented_image = augmented['image']
-    print("   ✓ Augmentation complete")
+
+    # Convert 2D mask to 3D if needed
+    mask_3d = input_mask if input_mask.ndim == 3 else cv2.cvtColor(input_mask, cv2.COLOR_GRAY2BGR)
+
+    try:
+        augmented = transform(image=input_image, mask=mask_3d)
+        augmented_image = augmented['image']
+        print("   ✓ Augmentation complete")
+    except Exception as e:
+        print(f"   ⚠ Augmentation failed: {e}")
+        print("   Using original image as fallback")
+        augmented_image = input_image.copy()
+        augmented = {'image': augmented_image}
 
     # Step 3: Extract and visualize output bounding boxes
     print("\n[3] Extracting pasted objects from output...")
