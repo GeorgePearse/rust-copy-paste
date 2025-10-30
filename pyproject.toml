@@ -11,8 +11,6 @@ dependencies = [
     "opencv-python-headless>=4.8.0",
     "pycocotools>=2.0.0",
     "loguru>=0.7.0",
-    "viscv>=0.1.0",
-    "visdet>=0.1.0",
 ]
 
 [build-system]
@@ -25,7 +23,3 @@ include = ["copy_paste*"]
 
 [tool.setuptools.package-data]
 '*' = ['*.yaml', '*.json']
-
-[tool.uv.sources]
-viscv = { workspace = true }
-visdet = { workspace = true }

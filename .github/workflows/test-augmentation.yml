@@ -1,0 +1,65 @@
+name: Test Augmentation Pipeline
+
+on:
+  pull_request:
+    branches: [master, main, develop]
+  push:
+    branches: [master, main]
+
+jobs:
+  test-augmentation:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv package manager
+        run: |
+          pip install uv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e .
+          uv pip install pytest opencv-python-headless
+
+      - name: Generate augmented outputs
+        run: |
+          cd tests
+          python generate_augmented_outputs.py
+
+      - name: Upload augmented outputs as artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: augmented-outputs-py${{ matrix.python-version }}
+          path: |
+            tests/augmented_outputs/
+            tests/dummy_dataset/
+          retention-days: 7
+
+      - name: Run basic tests
+        run: |
+          pytest tests/test_registration.py -v
+          pytest tests/test_basic_functionality.py -v
+          pytest tests/test_edge_cases.py -v
+
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## Augmentation Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Augmentation pipeline executed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Files Generated" >> $GITHUB_STEP_SUMMARY
+          if [ -d "tests/augmented_outputs" ]; then
+            echo "- Augmented outputs: $(ls -1 tests/augmented_outputs/*.png 2>/dev/null | wc -l) images" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -9,17 +9,12 @@ import numpy as np
 import torch
 from loguru import logger
 from pycocotools import mask as mask_utils
-from viscv.transforms import BaseTransform
-from visdet.registry import TRANSFORMS
-from visdet.structures.bbox import HorizontalBoxes
-from visdet.structures.mask import BitmapMasks
 
 # SimpleCopyPaste augmentation that loads objects from COCO annotation files
 # instead of database queries for better performance and portability.
 
 
-@TRANSFORMS.register_module(force=True)
-class CustomCopyPaste(BaseTransform):
+class CustomCopyPaste:
     def __init__(
         self,
         target_image_width: int,
@@ -373,9 +368,9 @@ class CustomCopyPaste(BaseTransform):
 
             # Create empty annotations when using a random background
             # (no annotations for the background itself)
-            results["gt_bboxes"] = HorizontalBoxes(torch.zeros((0, 4), dtype=torch.float32))
+            results["gt_bboxes"] = torch.zeros((0, 4), dtype=torch.float32)
             results["gt_bboxes_labels"] = np.array([], dtype=np.int64)
-            results["gt_masks"] = BitmapMasks(np.zeros((0, height, width), dtype=np.uint8), height, width)
+            results["gt_masks"] = np.zeros((0, height, width), dtype=np.uint8)
             results["gt_ignore_flags"] = np.array([], dtype=bool)
 
         # Apply foreground pasting if probability check passes
@@ -997,9 +992,19 @@ class CustomCopyPaste(BaseTransform):
 
     def _combine_annotations(self, results, pasted_bboxes, pasted_labels, pasted_masks, height, width):
         """Combine existing and new annotations."""
-        existing_bboxes = results["gt_bboxes"].tensor
+        # Handle both visdet structures and plain tensors for backward compatibility
+        if hasattr(results["gt_bboxes"], "tensor"):
+            existing_bboxes = results["gt_bboxes"].tensor
+        else:
+            existing_bboxes = results["gt_bboxes"]
+
         existing_labels = results["gt_bboxes_labels"]
-        existing_masks = results["gt_masks"].masks
+
+        if hasattr(results["gt_masks"], "masks"):
+            existing_masks = results["gt_masks"].masks
+        else:
+            existing_masks = results["gt_masks"]
+
         existing_ignore_flags = results["gt_ignore_flags"]
 
         # Log existing objects before combining
@@ -1033,9 +1038,9 @@ class CustomCopyPaste(BaseTransform):
                 combined_masks = existing_masks
                 combined_ignore_flags = existing_ignore_flags
 
-                results["gt_bboxes"] = HorizontalBoxes(combined_bboxes)
+                results["gt_bboxes"] = combined_bboxes
                 results["gt_bboxes_labels"] = combined_labels
-                results["gt_masks"] = BitmapMasks(combined_masks, height, width)
+                results["gt_masks"] = combined_masks
                 results["gt_ignore_flags"] = combined_ignore_flags
 
                 # Log final combined object counts and consolidated view
@@ -1064,9 +1069,9 @@ class CustomCopyPaste(BaseTransform):
             combined_masks = existing_masks
             combined_ignore_flags = existing_ignore_flags
 
-        results["gt_bboxes"] = HorizontalBoxes(combined_bboxes)
+        results["gt_bboxes"] = combined_bboxes
         results["gt_bboxes_labels"] = combined_labels
-        results["gt_masks"] = BitmapMasks(combined_masks, height, width)
+        results["gt_masks"] = combined_masks
         results["gt_ignore_flags"] = combined_ignore_flags
 
         # Log final combined object counts and consolidated view

@@ -4,8 +4,6 @@ import numpy as np
 import pytest
 import torch
 from copy_paste import CustomCopyPaste
-from visdet.structures.bbox import HorizontalBoxes
-from visdet.structures.mask import BitmapMasks
 
 
 @pytest.fixture
@@ -29,7 +27,7 @@ def sample_results():
     height, width = 512, 512
     img = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
 
-    # Create sample annotations
+    # Create sample annotations (using plain tensors and arrays)
     gt_bboxes = torch.tensor([[10, 10, 50, 50], [100, 100, 150, 150]], dtype=torch.float32)
     gt_labels = np.array([0, 1], dtype=np.int64)
 
@@ -40,9 +38,9 @@ def sample_results():
 
     return {
         "img": img,
-        "gt_bboxes": HorizontalBoxes(gt_bboxes),
+        "gt_bboxes": gt_bboxes,
         "gt_bboxes_labels": gt_labels,
-        "gt_masks": BitmapMasks(masks, height, width),
+        "gt_masks": masks,
         "gt_ignore_flags": np.array([False, False], dtype=bool),
         "img_shape": (height, width),
     }
@@ -70,9 +68,9 @@ def test_transform_preserves_structure(sample_transform, sample_results):
     assert "gt_ignore_flags" in output
     assert "img_shape" in output
 
-    # Check types are preserved
-    assert isinstance(output["gt_bboxes"], HorizontalBoxes)
-    assert isinstance(output["gt_masks"], BitmapMasks)
+    # Check types are preserved (plain tensors and arrays)
+    assert isinstance(output["gt_bboxes"], torch.Tensor)
+    assert isinstance(output["gt_masks"], np.ndarray)
     assert isinstance(output["gt_bboxes_labels"], np.ndarray)
     assert isinstance(output["gt_ignore_flags"], np.ndarray)
 
@@ -92,9 +90,9 @@ def test_random_background_generation():
 
     results = {
         "img": img,
-        "gt_bboxes": HorizontalBoxes(torch.zeros((0, 4), dtype=torch.float32)),
+        "gt_bboxes": torch.zeros((0, 4), dtype=torch.float32),
         "gt_bboxes_labels": np.array([], dtype=np.int64),
-        "gt_masks": BitmapMasks(np.zeros((0, height, width), dtype=np.uint8), height, width),
+        "gt_masks": np.zeros((0, height, width), dtype=np.uint8),
         "gt_ignore_flags": np.array([], dtype=bool),
         "img_shape": (height, width),
     }
@@ -108,7 +106,7 @@ def test_random_background_generation():
 
     # When using random background, annotations should be empty
     assert len(output["gt_bboxes_labels"]) == 0
-    assert output["gt_masks"].masks.shape[0] == 0
+    assert output["gt_masks"].shape[0] == 0
 
 
 def test_object_counts_configuration():

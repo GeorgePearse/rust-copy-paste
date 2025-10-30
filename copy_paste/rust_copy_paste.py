@@ -11,9 +11,6 @@ import numpy as np
 from loguru import logger
 from pycocotools import mask as mask_utils
 
-from viscv.transforms import BaseTransform
-from visdet.registry import TRANSFORMS
-
 try:
     from rusty_paste import ObjectPaster, PasteConfig
 
@@ -104,8 +101,7 @@ def _cached_load_image_and_mask(
     return img, mask
 
 
-@TRANSFORMS.register_module(force=True)
-class RustCopyPaste(BaseTransform):
+class RustCopyPaste:
     """Rust-accelerated copy-paste augmentation using rusty_paste.
 
     This transform provides a high-performance copy-paste augmentation using the Rust
