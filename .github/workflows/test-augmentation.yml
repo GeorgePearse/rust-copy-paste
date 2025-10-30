@@ -38,6 +38,14 @@ jobs:
           uv pip install -e .
           uv pip install pytest opencv-python-headless albumentations
 
+      - name: Run Rust integration tests
+        run: |
+          cargo test --test integration_test -- --nocapture
+
+      - name: Run Rust unit tests
+        run: |
+          cargo test --lib -- --nocapture
+
       - name: Generate augmented outputs
         run: |
           cd tests
