@@ -20,6 +20,9 @@ jobs:
         with:
           fetch-depth: 0  # Full history for git log
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
@@ -27,7 +30,11 @@ jobs:
 
       - name: Install uv package manager
         run: |
-          pip install uv
+          pip install uv maturin
+
+      - name: Build Rust extension with Maturin
+        run: |
+          maturin develop
 
       - name: Install dependencies
         run: |
