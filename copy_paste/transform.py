@@ -33,6 +33,7 @@ class CopyPasteAugmentation(A.DualTransform):
         scale_range: Range of scaling factors (min, max)
         use_random_background: Whether to generate random background
         blend_mode: Blending mode ('normal' or 'xray')
+        object_counts: Dict mapping class_id to exact count of objects to paste per class
         p: Probability of applying the transform (0.0 to 1.0)
     """
 
@@ -47,9 +48,15 @@ class CopyPasteAugmentation(A.DualTransform):
         scale_range: tuple[float, float] = (0.8, 1.2),
         use_random_background: bool = False,
         blend_mode: str = "normal",
+        object_counts: dict[int, int] | None = None,
         p: float = 1.0,
     ):
-        """Initialize the CopyPasteAugmentation transform."""
+        """Initialize the CopyPasteAugmentation transform.
+
+        Args:
+            object_counts: Optional dict mapping class_id to exact number of objects to paste.
+                          If None, no per-class count constraint is applied.
+        """
         super().__init__(p=p)
 
         if not RUST_AVAILABLE:
@@ -67,6 +74,7 @@ class CopyPasteAugmentation(A.DualTransform):
         self.scale_range = scale_range
         self.use_random_background = use_random_background
         self.blend_mode = blend_mode
+        self.object_counts = object_counts or {}
 
         # Initialize Rust transform
         self.rust_transform = CopyPasteTransform(
@@ -77,6 +85,7 @@ class CopyPasteAugmentation(A.DualTransform):
             use_scaling=use_scaling,
             use_random_background=use_random_background,
             blend_mode=blend_mode,
+            object_counts=self.object_counts if self.object_counts else None,
         )
 
         logger.info(
@@ -212,6 +221,7 @@ class CopyPasteAugmentation(A.DualTransform):
             "scale_range",
             "use_random_background",
             "blend_mode",
+            "object_counts",
             "p",
         )
 
