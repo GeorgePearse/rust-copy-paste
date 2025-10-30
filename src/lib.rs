@@ -1,9 +1,13 @@
 use pyo3::prelude::*;
 use numpy::{IntoPyArray, PyArray1, PyArray3, PyReadonlyArray1, PyReadonlyArray3, PyUntypedArrayMethods};
+use std::collections::HashMap;
+use ndarray::{Array3, Array1, s};
+use rand::Rng;
 
 mod affine;
 mod blending;
 mod collision;
+mod objects;
 
 /// Python module for copy-paste augmentation (_core submodule)
 #[pymodule]
@@ -23,6 +27,8 @@ pub struct AugmentationConfig {
     pub image_height: u32,
     #[pyo3(get, set)]
     pub max_paste_objects: u32,
+    #[pyo3(get)]
+    pub object_counts: HashMap<u32, u32>,  // class_id -> exact count to paste
     #[pyo3(get, set)]
     pub use_rotation: bool,
     #[pyo3(get, set)]
@@ -50,11 +56,13 @@ impl AugmentationConfig {
         scale_range: (f32, f32),
         use_random_background: bool,
         blend_mode: String,
+        object_counts: Option<HashMap<u32, u32>>,
     ) -> Self {
         AugmentationConfig {
             image_width,
             image_height,
             max_paste_objects,
+            object_counts: object_counts.unwrap_or_default(),
             use_rotation,
             use_scaling,
             rotation_range,
@@ -112,12 +120,14 @@ impl CopyPasteTransform {
         use_scaling: bool,
         use_random_background: bool,
         blend_mode: String,
+        object_counts: Option<HashMap<u32, u32>>,
     ) -> Self {
         CopyPasteTransform {
             config: AugmentationConfig {
                 image_width,
                 image_height,
                 max_paste_objects,
+                object_counts: object_counts.unwrap_or_default(),
                 use_rotation,
                 use_scaling,
                 rotation_range: (-30.0, 30.0),
@@ -136,24 +146,51 @@ impl CopyPasteTransform {
         mask: PyReadonlyArray3<u8>,
         target_mask: PyReadonlyArray3<u8>,
     ) -> PyResult<(Py<PyArray3<u8>>, Py<PyArray3<u8>>)> {
-        let _img_shape = image.shape();
+        let img_shape = image.shape();
         let img_array = image.as_array().to_owned();
-        let _mask_array = mask.as_array().to_owned();
+        let mask_array = mask.as_array().to_owned();
         let mut output_mask = target_mask.as_array().to_owned();
         let mut output_image = img_array.clone();
 
         // Get dimensions
-        let _height = _img_shape[0] as u32;
-        let _width = _img_shape[1] as u32;
+        let height = img_shape[0] as u32;
+        let width = img_shape[1] as u32;
 
-        // Simple placeholder: just return inputs (full algorithm requires more complex handling)
-        // In a production implementation, this would:
-        // 1. Find all objects in mask_array
-        // 2. Randomly select which objects to paste
-        // 3. Apply affine transformations
-        // 4. Check for collisions between objects
-        // 5. Blend selected objects onto output_image
-        // 6. Update output_mask with new object locations
+        // 1. Extract all objects from source mask
+        let extracted_objects = objects::extract_objects_from_mask(&img_array, &mask_array, 0);
+
+        // 2. Group objects by class ID
+        let mut objects_by_class: HashMap<u32, Vec<objects::ExtractedObject>> = HashMap::new();
+        for obj in extracted_objects {
+            objects_by_class.entry(obj.class_id)
+                .or_insert_with(Vec::new)
+                .push(obj);
+        }
+
+        // 3. Select objects to paste based on per-class counts
+        let selected_objects = objects::select_objects_by_class(
+            &objects_by_class,
+            &self.config.object_counts,
+        );
+
+        // 4. Place objects with collision detection and transformations
+        let placed_objects = objects::place_objects(
+            &selected_objects,
+            width,
+            height,
+            self.config.use_rotation,
+            self.config.use_scaling,
+            self.config.rotation_range,
+            self.config.scale_range,
+            0.01, // collision threshold (IoU > 0.01 = collision)
+        );
+
+        // 5. Compose placed objects onto output image with blending
+        let blend_mode = blending::BlendMode::from_string(&self.config.blend_mode);
+        objects::compose_objects(&mut output_image, &placed_objects, blend_mode);
+
+        // 6. Update output mask with new object locations
+        objects::update_output_mask(&mut output_mask, &placed_objects);
 
         Ok((
             output_image.into_pyarray_bound(py).unbind(),
@@ -192,7 +229,7 @@ mod tests {
     #[test]
     fn test_config_creation() {
         let config = AugmentationConfig::new(
-            512, 512, 5, true, true, (-30.0, 30.0), (0.8, 1.2), true, "normal".to_string(),
+            512, 512, 5, true, true, (-30.0, 30.0), (0.8, 1.2), true, "normal".to_string(), None,
         );
         assert_eq!(config.image_width, 512);
     }
