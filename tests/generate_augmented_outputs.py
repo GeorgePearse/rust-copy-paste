@@ -80,38 +80,26 @@ def main():
 
         height, width = original_img.shape[:2]
 
-        # Create minimal results dict for transform
-        results_dict = {
-            "img": original_img.copy(),
-            "gt_bboxes": np.zeros((0, 4), dtype=np.float32),
-            "gt_bboxes_labels": np.array([], dtype=np.int64),
-            "gt_masks": np.zeros((0, height, width), dtype=np.uint8),
-            "gt_ignore_flags": np.array([], dtype=bool),
-            "img_shape": (height, width),
-        }
-
-        # Apply transform
+        # Apply transform to image using the .apply() method
         try:
-            augmented = transform.transform(results_dict)
+            augmented_img = transform.apply(original_img.copy())
 
-            if augmented is None:
+            if augmented_img is None:
                 print(f"  ⚠️  Transform returned None")
                 continue
 
             # Save augmented image
             output_filename = f"augmented_{img_idx:03d}.png"
             output_path = output_dir / output_filename
-            cv2.imwrite(str(output_path), augmented["img"])
+            cv2.imwrite(str(output_path), augmented_img)
 
-            num_objects = len(augmented["gt_bboxes_labels"])
-            print(f"  ✅ Augmented with {num_objects} objects")
+            print(f"  ✅ Augmented image saved")
 
             results.append({
                 "original": img_info["file_name"],
                 "augmented": output_filename,
                 "width": width,
                 "height": height,
-                "num_objects": int(num_objects),
             })
 
         except Exception as e:
