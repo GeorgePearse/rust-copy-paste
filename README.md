@@ -1,4 +1,4 @@
-# copy_paste
+# simple-copy-paste
 
 High-performance copy-paste augmentation for object detection and instance segmentation with per-class control.
 
@@ -14,6 +14,14 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 - Work seamlessly with Albumentations
 
 ## Installation
+
+```bash
+pip install simple-copy-paste
+```
+
+### Development Installation
+
+For development, clone the repository and install with maturin:
 
 ```bash
 pip install -e .
@@ -148,4 +156,4 @@ transform = CopyPasteAugmentation(
 
 ## License
 
-Part of the internal machine learning packages.
+MIT License. See [LICENSE](LICENSE) for details.

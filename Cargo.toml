@@ -1,8 +1,8 @@
 [package]
-name = "copy_paste"
+name = "simple-copy-paste"
 version = "0.1.0"
 edition = "2021"
-description = "Rust implementation of copy-paste augmentation for object detection"
+description = "High-performance copy-paste augmentation for object detection and instance segmentation"
 
 [lib]
 name = "copy_paste"
