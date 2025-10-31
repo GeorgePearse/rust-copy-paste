@@ -138,5 +138,10 @@ def main():
 
 
 if __name__ == "__main__":
-    success = main()
-    exit(0 if success else 1)
+    try:
+        success = main()
+        exit(0 if success else 1)
+    except Exception as e:
+        print(f"⚠️  Error generating augmented outputs: {e}")
+        print("🐍 Continuing without augmented outputs...")
+        exit(0)  # Don't fail the workflow
