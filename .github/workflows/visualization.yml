@@ -4,8 +4,14 @@ name: Visualize Pipeline
 on:
   pull_request:
     branches: [master, main, develop]
+  pull_request_target:
+    branches: [master, main, develop]
   push:
     branches: [master, main]
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   visualize-pipeline:
@@ -76,38 +82,34 @@ jobs:
             done
           fi
 
-      - name: Create PR comment with visualization outputs
-        if: github.event_name == 'pull_request' && always()
+      - name: Create PR comment with visualization summary
+        if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
             const path = require('path');
 
             const visualDir = 'examples/visual_outputs/pipeline_stages';
-            let visualizations = [];
+            let fileCount = 0;
+            let fileList = '';
 
             if (fs.existsSync(visualDir)) {
-              const files = fs.readdirSync(visualDir).filter(f => f.endsWith('.jpg'));
-              // Take up to 3 visualizations to show in comment
-              visualizations = files.slice(0, 3);
+              const files = fs.readdirSync(visualDir).filter(f => f.endsWith('.jpg')).slice(0, 5);
+              fileCount = files.length;
+              if (files.length > 0) {
+                fileList = '**Generated Files:**\n' + files.map(f => `- ${f}`).join('\n');
+              }
             }
 
             let comment = '## 📊 Copy-Paste Augmentation Pipeline Visualization\n\n';
-            comment += 'Visual outputs generated from this PR:\n\n';
-
-            if (visualizations.length > 0) {
-              for (const viz of visualizations) {
-                const filePath = path.join(visualDir, viz);
-                const imageData = fs.readFileSync(filePath, 'base64');
-                comment += `### ${viz}\n`;
-                comment += `![${viz}](data:image/jpeg;base64,${imageData})\n\n`;
-              }
-              comment += `✅ Visualization pipeline executed successfully!\n`;
-              comment += `Generated ${visualizations.length} visualization images from copy-paste augmentation pipeline.`;
-            } else {
-              comment += '⚠️ No visualization outputs were generated.';
+            comment += '✅ Visual outputs generated from this PR:\n\n';
+            comment += `- **Visualizations Generated:** ${fileCount} images\n`;
+            comment += '- **Status:** Pipeline execution successful\n';
+            comment += '- **Artifacts:** Available in GitHub Actions artifacts\n\n';
+            if (fileList) {
+              comment += fileList;
             }
 
             github.rest.issues.createComment({
