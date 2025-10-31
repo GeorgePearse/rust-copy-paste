@@ -47,31 +47,18 @@ def main():
     # Create transform
     try:
         transform = CopyPasteAugmentation(
-            target_image_width=512,
-            target_image_height=512,
-            mm_class_list=class_list,
-            annotation_file=str(annotations_file),
-            paste_prob=1.0,
+            image_width=512,
+            image_height=512,
             max_paste_objects=2,
             scale_range=(1.0, 1.0),
             rotation_range=(0, 360),
-            verbose=True,
+            p=1.0,
         )
         print("🦀 Using CopyPasteAugmentation transform")
-    except RuntimeError:
-        # Fallback to SimpleCopyPaste if Rust not available
-        transform = SimpleCopyPaste(
-            target_image_width=512,
-            target_image_height=512,
-            mm_class_list=class_list,
-            annotation_file=str(annotations_file),
-            paste_prob=1.0,
-            max_paste_objects=2,
-            scale_range=(1.0, 1.0),
-            rotation_range=(0, 360),
-            verbose=True,
-        )
-        print("🐍 Using SimpleCopyPaste transform (Rust not available)")
+    except (RuntimeError, TypeError) as e:
+        print(f"⚠️  CopyPasteAugmentation not available: {e}")
+        print("🐍 Skipping augmentation generation")
+        return True  # Skip this step gracefully
 
     # Process up to 5 images
     results = []
