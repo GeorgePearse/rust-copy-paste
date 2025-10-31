@@ -2,6 +2,8 @@
 
 High-performance copy-paste augmentation for object detection and instance segmentation with per-class control.
 
+<!-- Test PR for visualization workflow -->
+
 ## Overview
 
 This package provides the `CopyPasteAugmentation` transform, which implements a sophisticated copy-paste augmentation technique for training object detection and instance segmentation models. The transform is implemented in Rust for maximum performance and can:
