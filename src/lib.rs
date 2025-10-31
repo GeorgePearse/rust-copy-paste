@@ -1,8 +1,9 @@
+use numpy::{
+    IntoPyArray, PyArray1, PyArray3, PyReadonlyArray1, PyReadonlyArray3, PyUntypedArrayMethods,
+};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use numpy::{IntoPyArray, PyArray1, PyArray3, PyReadonlyArray1, PyReadonlyArray3, PyUntypedArrayMethods};
 use std::collections::HashMap;
-use ndarray::{Array3, Array1, s};
-use rand::Rng;
 
 mod affine;
 mod blending;
@@ -28,7 +29,7 @@ pub struct AugmentationConfig {
     #[pyo3(get, set)]
     pub max_paste_objects: u32,
     #[pyo3(get)]
-    pub object_counts: HashMap<u32, u32>,  // class_id -> exact count to paste
+    pub object_counts: HashMap<u32, u32>, // class_id -> exact count to paste
     #[pyo3(get, set)]
     pub use_rotation: bool,
     #[pyo3(get, set)]
@@ -46,6 +47,7 @@ pub struct AugmentationConfig {
 #[pymethods]
 impl AugmentationConfig {
     #[new]
+    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, rotation_range, scale_range, use_random_background, blend_mode, object_counts=None))]
     pub fn new(
         image_width: u32,
         image_height: u32,
@@ -112,6 +114,7 @@ pub struct CopyPasteTransform {
 #[pymethods]
 impl CopyPasteTransform {
     #[new]
+    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, use_random_background, blend_mode, object_counts=None))]
     pub fn new(
         image_width: u32,
         image_height: u32,
@@ -146,51 +149,63 @@ impl CopyPasteTransform {
         mask: PyReadonlyArray3<u8>,
         target_mask: PyReadonlyArray3<u8>,
     ) -> PyResult<(Py<PyArray3<u8>>, Py<PyArray3<u8>>)> {
-        let img_shape = image.shape();
-        let img_array = image.as_array().to_owned();
-        let mask_array = mask.as_array().to_owned();
-        let mut output_mask = target_mask.as_array().to_owned();
-        let mut output_image = img_array.clone();
+        let image_shape = image.shape();
+        let mask_shape = mask.shape();
+        let target_mask_shape = target_mask.shape();
 
-        // Get dimensions
-        let height = img_shape[0] as u32;
-        let width = img_shape[1] as u32;
-
-        // 1. Extract all objects from source mask
-        let extracted_objects = objects::extract_objects_from_mask(&img_array, &mask_array, 0);
-
-        // 2. Group objects by class ID
-        let mut objects_by_class: HashMap<u32, Vec<objects::ExtractedObject>> = HashMap::new();
-        for obj in extracted_objects {
-            objects_by_class.entry(obj.class_id)
-                .or_insert_with(Vec::new)
-                .push(obj);
+        if image_shape.len() != 3 {
+            return Err(PyValueError::new_err("image must have shape (H, W, C)"));
+        }
+        if mask_shape.len() != 3 {
+            return Err(PyValueError::new_err("mask must have shape (H, W, 1)"));
+        }
+        if target_mask_shape.len() != 3 {
+            return Err(PyValueError::new_err(
+                "target_mask must have shape (H, W, 1)",
+            ));
         }
 
-        // 3. Select objects to paste based on per-class counts
-        let selected_objects = objects::select_objects_by_class(
-            &objects_by_class,
-            &self.config.object_counts,
-        );
+        let mut output_image = image.as_array().to_owned();
+        let mask_array = mask.as_array().to_owned();
+        let mut output_mask = target_mask.as_array().to_owned();
 
-        // 4. Place objects with collision detection and transformations
-        let placed_objects = objects::place_objects(
-            &selected_objects,
-            width,
-            height,
-            self.config.use_rotation,
-            self.config.use_scaling,
-            self.config.rotation_range,
-            self.config.scale_range,
-            0.01, // collision threshold (IoU > 0.01 = collision)
-        );
+        let height = image_shape[0] as u32;
+        let width = image_shape[1] as u32;
+        let config = self.config.clone();
 
-        // 5. Compose placed objects onto output image with blending
-        let blend_mode = blending::BlendMode::from_string(&self.config.blend_mode);
-        objects::compose_objects(&mut output_image, &placed_objects, blend_mode);
+        py.allow_threads(|| {
+            let extracted_objects =
+                objects::extract_objects_from_mask(output_image.view(), mask_array.view());
 
-        // 6. Update output mask with new object locations
-        objects::update_output_mask(&mut output_mask, &placed_objects);
+            let mut objects_by_class: HashMap<u32, Vec<objects::ExtractedObject>> = HashMap::new();
+            for obj in extracted_objects {
+                objects_by_class
+                    .entry(obj.class_id)
+                    .or_insert_with(Vec::new)
+                    .push(obj);
+            }
+
+            let selected_objects = objects::select_objects_by_class(
+                &objects_by_class,
+                &config.object_counts,
+                config.max_paste_objects,
+            );
+
+            let placed_objects = objects::place_objects(
+                &selected_objects,
+                width,
+                height,
+                config.use_rotation,
+                config.use_scaling,
+                config.rotation_range,
+                config.scale_range,
+                0.01,
+            );
+
+            let blend_mode = blending::BlendMode::from_string(&config.blend_mode);
+            objects::compose_objects(&mut output_image, &placed_objects, blend_mode);
+            objects::update_output_mask(&mut output_mask, &placed_objects);
+        });
 
         Ok((
             output_image.into_pyarray_bound(py).unbind(),
@@ -229,7 +244,16 @@ mod tests {
     #[test]
     fn test_config_creation() {
         let config = AugmentationConfig::new(
-            512, 512, 5, true, true, (-30.0, 30.0), (0.8, 1.2), true, "normal".to_string(), None,
+            512,
+            512,
+            5,
+            true,
+            true,
+            (-30.0, 30.0),
+            (0.8, 1.2),
+            true,
+            "normal".to_string(),
+            None,
         );
         assert_eq!(config.image_width, 512);
     }

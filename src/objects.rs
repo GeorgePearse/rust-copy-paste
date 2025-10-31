@@ -1,12 +1,11 @@
+use crate::affine::{apply_affine_transform, AffineTransform};
+use crate::blending::{blend_pixel, BlendMode};
+use crate::collision::{check_iou_collision, clip_bbox_to_image};
 /// Object handling for copy-paste augmentation
 /// Includes extraction, selection, and placement logic
-
-use ndarray::{Array3, s};
-use std::collections::HashMap;
+use ndarray::{Array3, ArrayView3};
 use rand::Rng;
-use crate::affine::{AffineTransform, apply_affine_transform};
-use crate::blending::{blend_pixel, BlendMode};
-use crate::collision::{clip_bbox_to_image, check_iou_collision};
+use std::collections::HashMap;
 
 /// Represents an extracted object from a mask
 #[derive(Clone, Debug)]
@@ -31,9 +30,8 @@ pub struct ExtractedObject {
 /// # Returns
 /// Vector of extracted objects
 pub fn extract_objects_from_mask(
-    image: &Array3<u8>,
-    mask: &Array3<u8>,
-    class_id: u32,
+    image: ArrayView3<'_, u8>,
+    mask: ArrayView3<'_, u8>,
 ) -> Vec<ExtractedObject> {
     let mut objects = Vec::new();
     let shape = image.shape();
@@ -48,18 +46,17 @@ pub fn extract_objects_from_mask(
         for x in 0..width {
             if mask[[y, x, 0]] > 0 && !visited[y][x] {
                 // Found a new object, extract its bounding box
-                let (x_min, y_min, x_max, y_max) = find_object_bounds(mask, x, y, &mut visited);
+                let (x_min, y_min, x_max, y_max) = find_object_bounds(&mask, x, y, &mut visited);
 
                 if x_max > x_min && y_max > y_min {
                     // Extract the patch
                     if let Some(obj) = extract_object_patch(
-                        image,
-                        mask,
+                        &image,
+                        &mask,
                         x_min as u32,
                         y_min as u32,
                         x_max as u32,
                         y_max as u32,
-                        class_id,
                     ) {
                         objects.push(obj);
                     }
@@ -73,7 +70,7 @@ pub fn extract_objects_from_mask(
 
 /// Find the bounding box of an object starting from a point
 fn find_object_bounds(
-    mask: &Array3<u8>,
+    mask: &ArrayView3<'_, u8>,
     start_x: usize,
     start_y: usize,
     visited: &mut Vec<Vec<bool>>,
@@ -125,13 +122,12 @@ fn find_object_bounds(
 
 /// Extract a patch from the image and mask
 fn extract_object_patch(
-    image: &Array3<u8>,
-    mask: &Array3<u8>,
+    image: &ArrayView3<'_, u8>,
+    mask: &ArrayView3<'_, u8>,
     x_min: u32,
     y_min: u32,
     x_max: u32,
     y_max: u32,
-    class_id: u32,
 ) -> Option<ExtractedObject> {
     let patch_height = (y_max - y_min) as usize;
     let patch_width = (x_max - x_min) as usize;
@@ -147,17 +143,37 @@ fn extract_object_patch(
 
     // Copy data
     let img_shape = image.shape();
+    let mut class_counts = [0usize; 256];
+
     for y in 0..patch_height {
         for x in 0..patch_width {
             let src_y = (y_min as usize) + y;
             let src_x = (x_min as usize) + x;
 
             if src_y < img_shape[0] && src_x < img_shape[1] {
+                let class_value = mask[[src_y, src_x, 0]];
+                if class_value > 0 {
+                    class_counts[class_value as usize] += 1;
+                }
+
                 for c in 0..channels {
                     patch_image[[y, x, c]] = image[[src_y, src_x, c]];
                     patch_mask[[y, x, c]] = mask[[src_y, src_x, c]];
                 }
             }
+        }
+    }
+
+    let mut class_id = 0u32;
+    let mut max_count = 0usize;
+    for (value, count) in class_counts.iter().enumerate() {
+        if value == 0 || *count == 0 {
+            continue;
+        }
+
+        if *count > max_count {
+            max_count = *count;
+            class_id = value as u32;
         }
     }
 
@@ -180,13 +196,30 @@ fn extract_object_patch(
 pub fn select_objects_by_class(
     available_objects: &HashMap<u32, Vec<ExtractedObject>>,
     object_counts: &HashMap<u32, u32>,
+    max_paste_objects: u32,
 ) -> Vec<ExtractedObject> {
+    if max_paste_objects == 0 {
+        return Vec::new();
+    }
+
     let mut selected = Vec::new();
     let mut rng = rand::thread_rng();
+    let mut total_selected = 0usize;
+    let global_cap = max_paste_objects as usize;
 
     for (class_id, count) in object_counts.iter() {
+        if total_selected >= global_cap {
+            break;
+        }
+
         if let Some(objects) = available_objects.get(class_id) {
-            let count_to_select = (*count as usize).min(objects.len());
+            let remaining_global = global_cap - total_selected;
+            let per_class_cap = (*count as usize).min(objects.len());
+            let count_to_select = per_class_cap.min(remaining_global);
+
+            if count_to_select == 0 {
+                continue;
+            }
 
             // Random selection without replacement
             let mut indices: Vec<usize> = (0..objects.len()).collect();
@@ -195,6 +228,8 @@ pub fn select_objects_by_class(
                 indices.swap(i, j);
                 selected.push(objects[indices[i]].clone());
             }
+
+            total_selected += count_to_select;
         }
     }
 
@@ -287,18 +322,26 @@ pub fn place_objects(
             .collect();
 
         let transformed_bbox = (
-            transformed_corners.iter().map(|p| p.0).fold(f32::INFINITY, f32::min),
-            transformed_corners.iter().map(|p| p.1).fold(f32::INFINITY, f32::min),
-            transformed_corners.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max),
-            transformed_corners.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max),
+            transformed_corners
+                .iter()
+                .map(|p| p.0)
+                .fold(f32::INFINITY, f32::min),
+            transformed_corners
+                .iter()
+                .map(|p| p.1)
+                .fold(f32::INFINITY, f32::min),
+            transformed_corners
+                .iter()
+                .map(|p| p.0)
+                .fold(f32::NEG_INFINITY, f32::max),
+            transformed_corners
+                .iter()
+                .map(|p| p.1)
+                .fold(f32::NEG_INFINITY, f32::max),
         );
 
         // Clip to image bounds
-        let clipped_bbox = clip_bbox_to_image(
-            transformed_bbox,
-            image_width,
-            image_height,
-        );
+        let clipped_bbox = clip_bbox_to_image(transformed_bbox, image_width, image_height);
 
         // Check for collisions with already-placed objects
         let mut has_collision = false;
@@ -399,6 +442,7 @@ pub fn compose_objects(
 ///
 /// # Returns
 /// Vector of bboxes in format (x_min, y_min, x_max, y_max) as floats
+#[allow(dead_code)]
 pub fn generate_output_bboxes(placed_objects: &[PlacedObject]) -> Vec<(f32, f32, f32, f32)> {
     placed_objects.iter().map(|obj| obj.bbox).collect()
 }
@@ -408,10 +452,7 @@ pub fn generate_output_bboxes(placed_objects: &[PlacedObject]) -> Vec<(f32, f32,
 /// # Arguments
 /// * `output_mask` - Target mask to update
 /// * `placed_objects` - Objects to add to mask
-pub fn update_output_mask(
-    output_mask: &mut Array3<u8>,
-    placed_objects: &[PlacedObject],
-) {
+pub fn update_output_mask(output_mask: &mut Array3<u8>, placed_objects: &[PlacedObject]) {
     let out_shape = output_mask.shape();
     let (height, width, _channels) = (out_shape[0], out_shape[1], out_shape[2]);
 
@@ -467,9 +508,9 @@ mod tests {
             }
         }
 
-        let objects = extract_objects_from_mask(&image, &mask, 0);
+        let objects = extract_objects_from_mask(image.view(), mask.view());
         assert!(!objects.is_empty());
-        assert_eq!(objects[0].class_id, 0);
+        assert_eq!(objects[0].class_id, 1);
     }
 
     #[test]
@@ -489,7 +530,7 @@ mod tests {
         let mut counts = HashMap::new();
         counts.insert(0, 2);
 
-        let selected = select_objects_by_class(&objects, &counts);
+        let selected = select_objects_by_class(&objects, &counts, 5);
         assert_eq!(selected.len(), 2);
     }
 
@@ -635,8 +676,92 @@ mod tests {
         counts.insert(0, 1);
         counts.insert(1, 1);
 
-        let selected = select_objects_by_class(&objects_by_class, &counts);
+        let selected = select_objects_by_class(&objects_by_class, &counts, 10);
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].class_id + selected[1].class_id, 1); // One of each class
+    }
+
+    #[test]
+    fn test_extract_objects_majority_class() {
+        let image = Array3::zeros((6, 6, 3));
+        let mut mask = Array3::zeros((6, 6, 3));
+
+        for y in 1..5 {
+            for x in 1..5 {
+                mask[[y, x, 0]] = if x < 3 { 2 } else { 3 };
+            }
+        }
+
+        let objects = extract_objects_from_mask(image.view(), mask.view());
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].class_id, 2); // majority label inside patch
+    }
+
+    #[test]
+    fn test_select_objects_respects_global_cap() {
+        let mut objects_by_class = HashMap::new();
+
+        let template = ExtractedObject {
+            image: Array3::zeros((5, 5, 3)),
+            mask: Array3::zeros((5, 5, 3)),
+            bbox: (0, 0, 5, 5),
+            class_id: 0,
+        };
+
+        let class_a: Vec<_> = (0..4)
+            .map(|_| ExtractedObject {
+                class_id: 0,
+                ..template.clone()
+            })
+            .collect();
+        let class_b: Vec<_> = (0..4)
+            .map(|_| ExtractedObject {
+                class_id: 1,
+                ..template.clone()
+            })
+            .collect();
+
+        objects_by_class.insert(0, class_a);
+        objects_by_class.insert(1, class_b);
+
+        let mut counts = HashMap::new();
+        counts.insert(0, 3);
+        counts.insert(1, 3);
+
+        let selected = select_objects_by_class(&objects_by_class, &counts, 3);
+        assert_eq!(selected.len(), 3);
+
+        let class_zero = selected.iter().filter(|o| o.class_id == 0).count();
+        let class_one = selected.iter().filter(|o| o.class_id == 1).count();
+
+        assert!(class_zero <= 3 && class_one <= 3);
+    }
+
+    #[test]
+    fn test_select_objects_per_class_limit() {
+        let mut objects_by_class = HashMap::new();
+
+        let template = ExtractedObject {
+            image: Array3::zeros((5, 5, 3)),
+            mask: Array3::zeros((5, 5, 3)),
+            bbox: (0, 0, 5, 5),
+            class_id: 0,
+        };
+
+        let class_entries: Vec<_> = (0..5)
+            .map(|_| ExtractedObject {
+                class_id: 0,
+                ..template.clone()
+            })
+            .collect();
+
+        objects_by_class.insert(0, class_entries);
+
+        let mut counts = HashMap::new();
+        counts.insert(0, 2);
+
+        let selected = select_objects_by_class(&objects_by_class, &counts, 10);
+        assert_eq!(selected.len(), 2);
+        assert!(selected.iter().all(|o| o.class_id == 0));
     }
 }

@@ -36,6 +36,7 @@ pub fn check_iou_collision(bbox1: BBox, bbox2: BBox, threshold: f32) -> bool {
 }
 
 /// Get the intersection box of two bounding boxes
+#[allow(dead_code)]
 pub fn get_intersection_box(bbox1: BBox, bbox2: BBox) -> Option<BBox> {
     let (x1_min, y1_min, x1_max, y1_max) = bbox1;
     let (x2_min, y2_min, x2_max, y2_max) = bbox2;
@@ -53,6 +54,7 @@ pub fn get_intersection_box(bbox1: BBox, bbox2: BBox) -> Option<BBox> {
 }
 
 /// Get the union (bounding box that contains both boxes)
+#[allow(dead_code)]
 pub fn get_union_box(bbox1: BBox, bbox2: BBox) -> BBox {
     let (x1_min, y1_min, x1_max, y1_max) = bbox1;
     let (x2_min, y2_min, x2_max, y2_max) = bbox2;

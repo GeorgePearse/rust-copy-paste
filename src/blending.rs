@@ -17,6 +17,7 @@ impl BlendMode {
 }
 
 /// Blend two images with the specified mode
+#[allow(dead_code)]
 pub fn blend_images(
     base: &[u8],
     overlay: &[u8],

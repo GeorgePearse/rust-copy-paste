@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{generate_test_image_with_objects, count_objects_simple};
+use common::{count_objects_simple, generate_test_image_with_objects};
 
 // Note: These tests are designed to work with the current placeholder implementation
 // and will be updated when the full algorithm is implemented.
@@ -41,8 +41,7 @@ fn test_object_counting_with_generated_images() {
         assert_eq!(
             counted, *num_objects,
             "Failed to count {} objects, got {}",
-            num_objects,
-            counted
+            num_objects, counted
         );
     }
 }
@@ -117,9 +116,7 @@ fn test_multiple_configurations() {
         assert_eq!(
             counted, num_objects,
             "Configuration (objects={}, {}x{}) failed",
-            num_objects,
-            width,
-            height
+            num_objects, width, height
         );
     }
 }
@@ -168,9 +165,7 @@ fn test_different_image_sizes() {
         assert_eq!(
             counted, num_objects,
             "Failed for size {}x{} with {} objects",
-            width,
-            height,
-            num_objects
+            width, height, num_objects
         );
     }
 }

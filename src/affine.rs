@@ -3,6 +3,7 @@ use std::f32::consts::PI;
 
 /// Represents an affine transformation matrix and its parameters
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct AffineTransform {
     /// 2x3 affine transformation matrix
     pub matrix: Array2<f32>,
@@ -26,6 +27,7 @@ impl AffineTransform {
     }
 
     /// Create identity transformation
+    #[allow(dead_code)]
     pub fn identity() -> Self {
         AffineTransform {
             matrix: Array2::from_shape_fn((2, 3), |(i, j)| {
@@ -79,6 +81,7 @@ pub fn apply_affine_transform(point: (f32, f32), transform: &AffineTransform) ->
 }
 
 /// Get the inverse affine transformation
+#[allow(dead_code)]
 pub fn invert_affine(transform: &AffineTransform) -> AffineTransform {
     let m = &transform.matrix;
 

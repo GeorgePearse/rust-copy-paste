@@ -1,10 +1,8 @@
 """Albumentations-compatible copy-paste augmentation using Rust implementation."""
 
-import random
 from typing import Any
 
 import albumentations as A
-import cv2
 import numpy as np
 from loguru import logger
 
@@ -88,6 +86,7 @@ class CopyPasteAugmentation(A.DualTransform):
         self.use_random_background = use_random_background
         self.blend_mode = blend_mode
         self.object_counts = object_counts or {}
+        self._last_mask_output: np.ndarray | None = None
 
         # Initialize Rust transform
         self.rust_transform = CopyPasteTransform(
@@ -133,14 +132,21 @@ class CopyPasteAugmentation(A.DualTransform):
         # Note: The Rust apply() method currently returns data unchanged
         # Full implementation would perform the copy-paste operations
         try:
-            augmented_image, _ = self.rust_transform.apply(
-                img,
-                np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8),
-                np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8),
+            source_mask = self._prepare_mask(params.get("mask"), img.shape[0], img.shape[1])
+            target_mask = self._prepare_mask(params.get("target_mask"), img.shape[0], img.shape[1])
+
+            augmented_image, augmented_mask = self.rust_transform.apply(
+                np.ascontiguousarray(img),
+                source_mask,
+                target_mask,
+            )
+            self._last_mask_output = self._normalize_mask_output(
+                augmented_mask, params.get("mask")
             )
             return augmented_image
         except Exception as e:
             logger.warning(f"Rust augmentation failed: {e}, returning original image")
+            self._last_mask_output = None
             return img
 
     def apply_to_masks(
@@ -162,15 +168,26 @@ class CopyPasteAugmentation(A.DualTransform):
         if not masks:
             return masks
 
-        result = []
-        for mask in masks:
-            if mask.ndim != 2:
-                raise ValueError(f"Expected 2D mask, got shape {mask.shape}")
-            # Ensure mask is uint8
-            if mask.dtype != np.uint8:
-                mask = (mask * 255).astype(np.uint8) if mask.max() <= 1.0 else mask.astype(np.uint8)
-            result.append(mask)
-        return result
+        return [self.apply_to_mask(mask, **params) for mask in masks]
+
+    def apply_to_mask(
+        self,
+        mask: np.ndarray,
+        **params: Any,
+    ) -> np.ndarray:
+        """Return mask output from Rust if available, otherwise sanitize input mask."""
+        mask = self._ensure_uint8(mask)
+
+        if mask.ndim != 2:
+            raise ValueError(f"Expected 2D mask, got shape {mask.shape}")
+
+        if self._last_mask_output is not None:
+            target_shape = (int(mask.shape[0]), int(mask.shape[1]))
+            output = self._resize_mask_if_needed(self._last_mask_output, target_shape)
+            self._last_mask_output = None
+            return output
+
+        return mask
 
     def apply_to_bboxes(
         self,
@@ -221,6 +238,65 @@ class CopyPasteAugmentation(A.DualTransform):
         except Exception as e:
             logger.warning(f"Bbox transformation failed: {e}, returning original bboxes")
             return bboxes
+
+    @staticmethod
+    def _ensure_uint8(array: np.ndarray) -> np.ndarray:
+        if array.dtype == np.uint8:
+            return array
+        if array.max(initial=0) <= 1.0:
+            return (array * 255).astype(np.uint8)
+        return array.astype(np.uint8)
+
+    def _prepare_mask(self, mask: np.ndarray | None, height: int, width: int) -> np.ndarray:
+        if mask is None:
+            return np.zeros((height, width, 1), dtype=np.uint8)
+
+        mask_uint8 = self._ensure_uint8(mask)
+
+        if mask_uint8.ndim == 2:
+            mask_uint8 = mask_uint8[..., None]
+        elif mask_uint8.ndim == 3 and mask_uint8.shape[2] > 1:
+            mask_uint8 = mask_uint8[..., :1]
+
+        if mask_uint8.shape[0] != height or mask_uint8.shape[1] != width:
+            logger.warning(
+                "Mask shape %s does not match image size (%d, %d); generating empty mask",
+                mask_uint8.shape,
+                height,
+                width,
+            )
+            return np.zeros((height, width, 1), dtype=np.uint8)
+
+        return np.ascontiguousarray(mask_uint8)
+
+    @staticmethod
+    def _normalize_mask_output(
+        mask: np.ndarray, fallback: np.ndarray | None
+    ) -> np.ndarray | None:
+        mask = np.asarray(mask)
+        if mask.ndim == 3 and mask.shape[2] == 1:
+            return mask[..., 0].astype(np.uint8)
+        if mask.ndim == 2:
+            return mask.astype(np.uint8)
+        if fallback is not None:
+            fallback_uint8 = CopyPasteAugmentation._ensure_uint8(fallback)
+            return fallback_uint8 if fallback_uint8.ndim == 2 else None
+        return None
+
+    @staticmethod
+    def _resize_mask_if_needed(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
+        if mask.shape == target_shape:
+            return mask
+
+        # Fallback: best-effort resize via numpy broadcasting (nearest neighbor)
+        target_height, target_width = target_shape
+        height, width = mask.shape
+
+        scale_y = max(target_height // height, 1)
+        scale_x = max(target_width // width, 1)
+
+        resized = np.repeat(np.repeat(mask, scale_y, axis=0), scale_x, axis=1)
+        return resized[:target_height, :target_width]
 
     def get_transform_init_args_names(self) -> tuple[str, ...]:
         """Return names of arguments used to initialize the transform."""

@@ -1,7 +1,6 @@
 //! Common test utilities for integration tests
 //! Provides helpers for generating synthetic test data and verifying object counts
 
-
 /// Test image with ground truth information
 #[derive(Clone, Debug)]
 pub struct TestImage {
@@ -58,11 +57,7 @@ impl TestImage {
 ///
 /// # Returns
 /// `TestImage` with generated image, mask, and expected object count
-pub fn generate_test_image_with_objects(
-    num_objects: usize,
-    width: u32,
-    height: u32,
-) -> TestImage {
+pub fn generate_test_image_with_objects(num_objects: usize, width: u32, height: u32) -> TestImage {
     let w = width as usize;
     let h = height as usize;
     let mut image = vec![128u8; w * h * 3]; // Gray background
@@ -96,14 +91,7 @@ pub fn generate_test_image_with_objects(
 
             // Draw circle in image and mask
             draw_circle(
-                &mut image,
-                &mut mask,
-                w,
-                h,
-                center_x,
-                center_y,
-                radius,
-                obj_count,
+                &mut image, &mut mask, w, h, center_x, center_y, radius, obj_count,
             );
 
             obj_count += 1;
@@ -205,7 +193,14 @@ pub fn count_objects_simple(mask: &[u8], width: u32, height: u32) -> usize {
 }
 
 /// Flood fill algorithm for connected component analysis
-fn flood_fill(mask: &[u8], visited: &mut [bool], width: usize, height: usize, start_x: usize, start_y: usize) {
+fn flood_fill(
+    mask: &[u8],
+    visited: &mut [bool],
+    width: usize,
+    height: usize,
+    start_x: usize,
+    start_y: usize,
+) {
     let mut queue = vec![(start_x, start_y)];
     let mut head = 0;
 
@@ -293,7 +288,11 @@ mod tests {
     fn test_count_objects_in_generated_image() {
         let img = generate_test_image_with_objects(3, 512, 512);
         let count = count_objects_simple(&img.mask, img.width, img.height);
-        assert_eq!(count, img.expected_objects, "Counted {} objects, expected {}", count, img.expected_objects);
+        assert_eq!(
+            count, img.expected_objects,
+            "Counted {} objects, expected {}",
+            count, img.expected_objects
+        );
     }
 
     #[test]
