@@ -1,9 +1,8 @@
-use crate::affine::{apply_affine_transform, AffineTransform};
 use crate::blending::{blend_pixel, BlendMode};
 use crate::collision::{check_iou_collision, clip_bbox_to_image};
 /// Object handling for copy-paste augmentation
 /// Includes extraction, selection, and placement logic
-use ndarray::{Array3, ArrayView3};
+use ndarray::{s, Array3, ArrayView3};
 use rand::Rng;
 use std::collections::HashMap;
 
@@ -298,10 +297,22 @@ fn transform_patch(
         })
         .collect();
 
-    let min_x = transformed_corners.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
-    let min_y = transformed_corners.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
-    let max_x = transformed_corners.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
-    let max_y = transformed_corners.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
+    let min_x = transformed_corners
+        .iter()
+        .map(|p| p.0)
+        .fold(f32::INFINITY, f32::min);
+    let min_y = transformed_corners
+        .iter()
+        .map(|p| p.1)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = transformed_corners
+        .iter()
+        .map(|p| p.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let max_y = transformed_corners
+        .iter()
+        .map(|p| p.1)
+        .fold(f32::NEG_INFINITY, f32::max);
 
     let new_width = ((max_x - min_x).ceil() as usize).max(1);
     let new_height = ((max_y - min_y).ceil() as usize).max(1);
@@ -327,7 +338,11 @@ fn transform_patch(
             let src_y = scale_inv * (sin_a_inv * dx + cos_a_inv * dy) + center_y;
 
             // Bilinear interpolation
-            if src_x >= 0.0 && src_x < (width as f32 - 1e-6) && src_y >= 0.0 && src_y < (height as f32 - 1e-6) {
+            if src_x >= 0.0
+                && src_x < (width as f32 - 1e-6)
+                && src_y >= 0.0
+                && src_y < (height as f32 - 1e-6)
+            {
                 let x0 = src_x.floor() as usize;
                 let y0 = src_y.floor() as usize;
                 let x1 = (x0 + 1).min(width - 1);
@@ -399,19 +414,36 @@ pub fn place_objects(
     let mut rng = rand::thread_rng();
 
     for obj in selected_objects {
-        // Random position within image bounds
+        // Random center position within image bounds based on original patch size
         let obj_width = (obj.bbox.2 - obj.bbox.0) as f32;
         let obj_height = (obj.bbox.3 - obj.bbox.1) as f32;
 
-        let max_x = ((image_width as f32 - obj_width).max(0.0)) as i32;
-        let max_y = ((image_height as f32 - obj_height).max(0.0)) as i32;
+        let image_width_f = image_width as f32;
+        let image_height_f = image_height as f32;
 
-        if max_x <= 0 || max_y <= 0 {
+        if image_width_f < obj_width || image_height_f < obj_height {
             continue; // Object too large for image
         }
 
-        let pos_x = rng.gen_range(0..=(max_x as usize)) as f32;
-        let pos_y = rng.gen_range(0..=(max_y as usize)) as f32;
+        let half_width = obj_width / 2.0;
+        let half_height = obj_height / 2.0;
+
+        let center_x_min = half_width;
+        let center_x_max = image_width_f - half_width;
+        let center_y_min = half_height;
+        let center_y_max = image_height_f - half_height;
+
+        let center_x = if (center_x_max - center_x_min).abs() <= f32::EPSILON {
+            center_x_min
+        } else {
+            rng.gen_range(center_x_min..=center_x_max)
+        };
+
+        let center_y = if (center_y_max - center_y_min).abs() <= f32::EPSILON {
+            center_y_min
+        } else {
+            rng.gen_range(center_y_min..=center_y_max)
+        };
 
         // Random transformation parameters
         let rotation = if use_rotation {
@@ -426,49 +458,75 @@ pub fn place_objects(
             1.0
         };
 
-        // Create affine transformation
-        let transform = AffineTransform::new(rotation, scale, pos_x, pos_y);
+        // Apply rotation and scaling transformation to the patch
+        let (mut transformed_image, mut transformed_mask, offset_x, offset_y) =
+            if rotation != 0.0 || (scale - 1.0).abs() > 1e-6 {
+                transform_patch(&obj.image, &obj.mask, rotation, scale)
+            } else {
+                (
+                    obj.image.clone(),
+                    obj.mask.clone(),
+                    -half_width,
+                    -half_height,
+                )
+            };
 
-        // Transform the object's bounding box
-        let (x_min, y_min, x_max, y_max) = obj.bbox;
-        let corners = vec![
-            (x_min as f32, y_min as f32),
-            (x_max as f32, y_min as f32),
-            (x_min as f32, y_max as f32),
-            (x_max as f32, y_max as f32),
-        ];
+        let patch_width = transformed_image.shape()[1] as f32;
+        let patch_height = transformed_image.shape()[0] as f32;
 
-        let transformed_corners: Vec<(f32, f32)> = corners
-            .iter()
-            .map(|&p| apply_affine_transform(p, &transform))
-            .collect();
-
-        let transformed_bbox = (
-            transformed_corners
-                .iter()
-                .map(|p| p.0)
-                .fold(f32::INFINITY, f32::min),
-            transformed_corners
-                .iter()
-                .map(|p| p.1)
-                .fold(f32::INFINITY, f32::min),
-            transformed_corners
-                .iter()
-                .map(|p| p.0)
-                .fold(f32::NEG_INFINITY, f32::max),
-            transformed_corners
-                .iter()
-                .map(|p| p.1)
-                .fold(f32::NEG_INFINITY, f32::max),
+        let raw_bbox = (
+            center_x + offset_x,
+            center_y + offset_y,
+            center_x + offset_x + patch_width,
+            center_y + offset_y + patch_height,
         );
 
-        // Clip to image bounds
-        let clipped_bbox = clip_bbox_to_image(transformed_bbox, image_width, image_height);
+        let clipped_bbox = clip_bbox_to_image(raw_bbox, image_width, image_height);
 
-        // Check for collisions with already-placed objects
+        // Calculate how much of the transformed patch lies inside the image
+        let trim_left = (clipped_bbox.0 - raw_bbox.0).max(0.0);
+        let trim_top = (clipped_bbox.1 - raw_bbox.1).max(0.0);
+        let trim_right = (raw_bbox.2 - clipped_bbox.2).max(0.0);
+        let trim_bottom = (raw_bbox.3 - clipped_bbox.3).max(0.0);
+
+        let src_width = transformed_image.shape()[1];
+        let src_height = transformed_image.shape()[0];
+
+        let x_start = trim_left.round().clamp(0.0, src_width as f32) as usize;
+        let y_start = trim_top.round().clamp(0.0, src_height as f32) as usize;
+        let x_end = src_width.saturating_sub(trim_right.round() as usize);
+        let y_end = src_height.saturating_sub(trim_bottom.round() as usize);
+
+        if x_start >= x_end || y_start >= y_end {
+            continue; // Patch lies completely outside the image
+        }
+
+        // Crop the patch to the visible region
+        transformed_image = transformed_image
+            .slice(s![y_start..y_end, x_start..x_end, ..])
+            .to_owned();
+        transformed_mask = transformed_mask
+            .slice(s![y_start..y_end, x_start..x_end, ..])
+            .to_owned();
+
+        let cropped_width = transformed_image.shape()[1] as f32;
+        let cropped_height = transformed_image.shape()[0] as f32;
+
+        let final_x_min = (raw_bbox.0 + x_start as f32).clamp(0.0, image_width_f);
+        let final_y_min = (raw_bbox.1 + y_start as f32).clamp(0.0, image_height_f);
+        let final_x_max = (final_x_min + cropped_width).min(image_width_f);
+        let final_y_max = (final_y_min + cropped_height).min(image_height_f);
+
+        if final_x_max - final_x_min <= 0.0 || final_y_max - final_y_min <= 0.0 {
+            continue;
+        }
+
+        let final_bbox = (final_x_min, final_y_min, final_x_max, final_y_max);
+
+        // Check for collisions with already-placed objects using the final bbox
         let mut has_collision = false;
         for placed_obj in &placed {
-            if check_iou_collision(clipped_bbox, placed_obj.bbox, collision_threshold) {
+            if check_iou_collision(final_bbox, placed_obj.bbox, collision_threshold) {
                 has_collision = true;
                 break;
             }
@@ -477,29 +535,6 @@ pub fn place_objects(
         if has_collision {
             continue; // Skip this object due to collision
         }
-
-        // Apply rotation and scaling transformation to the patch
-        let (transformed_image, transformed_mask, offset_x, offset_y) =
-            if rotation != 0.0 || (scale - 1.0).abs() > 1e-6 {
-                transform_patch(&obj.image, &obj.mask, rotation, scale)
-            } else {
-                (obj.image.clone(), obj.mask.clone(), 0.0, 0.0)
-            };
-
-        // Adjust bbox position based on the transformation offset
-        let adjusted_x_min = clipped_bbox.0 + offset_x;
-        let adjusted_y_min = clipped_bbox.1 + offset_y;
-        let patch_width = transformed_image.shape()[1] as f32;
-        let patch_height = transformed_image.shape()[0] as f32;
-        let adjusted_bbox = (
-            adjusted_x_min,
-            adjusted_y_min,
-            adjusted_x_min + patch_width,
-            adjusted_y_min + patch_height,
-        );
-
-        // Clip adjusted bbox to image bounds
-        let final_bbox = clip_bbox_to_image(adjusted_bbox, image_width, image_height);
 
         let placed_obj = PlacedObject {
             bbox: final_bbox,
@@ -532,24 +567,36 @@ pub fn compose_objects(
     let (height, width, channels) = (out_shape[0], out_shape[1], out_shape[2]);
 
     for placed_obj in placed_objects {
-        let (x_min, y_min, x_max, y_max) = placed_obj.bbox;
-        let x_min = (x_min as usize).min(width);
-        let y_min = (y_min as usize).min(height);
-        let x_max = ((x_max as usize).min(width)).max(x_min);
-        let y_max = ((y_max as usize).min(height)).max(y_min);
+        let (x_min_f, y_min_f, _, _) = placed_obj.bbox;
+        let x_min = x_min_f.floor().max(0.0) as usize;
+        let y_min = y_min_f.floor().max(0.0) as usize;
 
-        let patch_width = x_max - x_min;
-        let patch_height = y_max - y_min;
+        if x_min >= width || y_min >= height {
+            continue;
+        }
 
-        if patch_width == 0 || patch_height == 0 {
+        let obj_shape = placed_obj.image.shape();
+        let patch_height = obj_shape[0];
+        let patch_width = obj_shape[1];
+
+        if patch_height == 0 || patch_width == 0 {
+            continue;
+        }
+
+        let y_max = (y_min + patch_height).min(height);
+        let x_max = (x_min + patch_width).min(width);
+
+        let target_height = y_max.saturating_sub(y_min);
+        let target_width = x_max.saturating_sub(x_min);
+
+        if target_width == 0 || target_height == 0 {
             continue;
         }
 
         // Blend the object patch onto the output image
         // Using the mask to determine alpha blending
-        let obj_shape = placed_obj.image.shape();
-        for py in 0..patch_height.min(obj_shape[0]) {
-            for px in 0..patch_width.min(obj_shape[1]) {
+        for py in 0..target_height {
+            for px in 0..target_width {
                 let target_y = y_min + py;
                 let target_x = x_min + px;
 
@@ -600,23 +647,35 @@ pub fn update_output_mask(output_mask: &mut Array3<u8>, placed_objects: &[Placed
     let (height, width, _channels) = (out_shape[0], out_shape[1], out_shape[2]);
 
     for placed_obj in placed_objects {
-        let (x_min, y_min, x_max, y_max) = placed_obj.bbox;
-        let x_min = (x_min as usize).min(width);
-        let y_min = (y_min as usize).min(height);
-        let x_max = ((x_max as usize).min(width)).max(x_min);
-        let y_max = ((y_max as usize).min(height)).max(y_min);
+        let (x_min_f, y_min_f, _, _) = placed_obj.bbox;
+        let x_min = x_min_f.floor().max(0.0) as usize;
+        let y_min = y_min_f.floor().max(0.0) as usize;
 
-        let patch_width = x_max - x_min;
-        let patch_height = y_max - y_min;
+        if x_min >= width || y_min >= height {
+            continue;
+        }
+
+        let mask_shape = placed_obj.mask.shape();
+        let patch_height = mask_shape[0];
+        let patch_width = mask_shape[1];
 
         if patch_width == 0 || patch_height == 0 {
             continue;
         }
 
+        let y_max = (y_min + patch_height).min(height);
+        let x_max = (x_min + patch_width).min(width);
+
+        let target_height = y_max.saturating_sub(y_min);
+        let target_width = x_max.saturating_sub(x_min);
+
+        if target_width == 0 || target_height == 0 {
+            continue;
+        }
+
         // Copy mask values where object exists
-        let mask_shape = placed_obj.mask.shape();
-        for py in 0..patch_height.min(mask_shape[0]) {
-            for px in 0..patch_width.min(mask_shape[1]) {
+        for py in 0..target_height {
+            for px in 0..target_width {
                 let target_y = y_min + py;
                 let target_x = x_min + px;
 
