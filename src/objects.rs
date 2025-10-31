@@ -249,6 +249,128 @@ pub struct PlacedObject {
     pub class_id: u32,
 }
 
+/// Transform a patch using rotation and scaling with bilinear interpolation
+///
+/// # Arguments
+/// * `patch` - The image patch to transform
+/// * `mask` - The mask patch to transform
+/// * `rotation` - Rotation angle in degrees
+/// * `scale` - Scale factor
+///
+/// # Returns
+/// Tuple of (transformed_image, transformed_mask, offset_x, offset_y)
+/// where offset_x/offset_y are the displacement from the patch center
+fn transform_patch(
+    patch: &Array3<u8>,
+    mask: &Array3<u8>,
+    rotation: f32,
+    scale: f32,
+) -> (Array3<u8>, Array3<u8>, f32, f32) {
+    let (height, width, channels) = (patch.shape()[0], patch.shape()[1], patch.shape()[2]);
+
+    if height == 0 || width == 0 {
+        return (patch.clone(), mask.clone(), 0.0, 0.0);
+    }
+
+    // Center of the patch
+    let center_x = (width as f32) / 2.0;
+    let center_y = (height as f32) / 2.0;
+
+    // Convert rotation to radians
+    let rad = rotation * std::f32::consts::PI / 180.0;
+    let cos_a = rad.cos();
+    let sin_a = rad.sin();
+
+    // Calculate transformed corners relative to center
+    let corners = vec![
+        (0.0 - center_x, 0.0 - center_y),
+        (width as f32 - center_x, 0.0 - center_y),
+        (0.0 - center_x, height as f32 - center_y),
+        (width as f32 - center_x, height as f32 - center_y),
+    ];
+
+    let transformed_corners: Vec<(f32, f32)> = corners
+        .iter()
+        .map(|&(x, y)| {
+            let new_x = scale * (cos_a * x - sin_a * y);
+            let new_y = scale * (sin_a * x + cos_a * y);
+            (new_x, new_y)
+        })
+        .collect();
+
+    let min_x = transformed_corners.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
+    let min_y = transformed_corners.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
+    let max_x = transformed_corners.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
+    let max_y = transformed_corners.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
+
+    let new_width = ((max_x - min_x).ceil() as usize).max(1);
+    let new_height = ((max_y - min_y).ceil() as usize).max(1);
+
+    let mut output_image = Array3::zeros((new_height, new_width, channels));
+    let mut output_mask = Array3::zeros((new_height, new_width, channels));
+
+    // Inverse transformation parameters
+    let scale_inv = if scale > 1e-6 { 1.0 / scale } else { 1.0 };
+    let cos_a_inv = cos_a;
+    let sin_a_inv = -sin_a;
+
+    // Sample from source patch using bilinear interpolation
+    for y in 0..new_height {
+        for x in 0..new_width {
+            let out_x = (x as f32) + min_x;
+            let out_y = (y as f32) + min_y;
+
+            // Apply inverse transform to find source coordinates
+            let dx = out_x;
+            let dy = out_y;
+            let src_x = scale_inv * (cos_a_inv * dx - sin_a_inv * dy) + center_x;
+            let src_y = scale_inv * (sin_a_inv * dx + cos_a_inv * dy) + center_y;
+
+            // Bilinear interpolation
+            if src_x >= 0.0 && src_x < (width as f32 - 1e-6) && src_y >= 0.0 && src_y < (height as f32 - 1e-6) {
+                let x0 = src_x.floor() as usize;
+                let y0 = src_y.floor() as usize;
+                let x1 = (x0 + 1).min(width - 1);
+                let y1 = (y0 + 1).min(height - 1);
+
+                let fx = src_x - x0 as f32;
+                let fy = src_y - y0 as f32;
+
+                for c in 0..channels {
+                    let v00 = patch[[y0, x0, c]] as f32;
+                    let v10 = patch[[y0, x1, c]] as f32;
+                    let v01 = patch[[y1, x0, c]] as f32;
+                    let v11 = patch[[y1, x1, c]] as f32;
+
+                    let v0 = v00 * (1.0 - fx) + v10 * fx;
+                    let v1 = v01 * (1.0 - fx) + v11 * fx;
+                    let v = v0 * (1.0 - fy) + v1 * fy;
+
+                    output_image[[y, x, c]] = v.round() as u8;
+
+                    // Same for mask
+                    let m00 = mask[[y0, x0, c]] as f32;
+                    let m10 = mask[[y0, x1, c]] as f32;
+                    let m01 = mask[[y1, x0, c]] as f32;
+                    let m11 = mask[[y1, x1, c]] as f32;
+
+                    let m0 = m00 * (1.0 - fx) + m10 * fx;
+                    let m1 = m01 * (1.0 - fx) + m11 * fx;
+                    let m = m0 * (1.0 - fy) + m1 * fy;
+
+                    output_mask[[y, x, c]] = (m.round() as u8).max(if m > 127.5 { 255 } else { 0 });
+                }
+            }
+        }
+    }
+
+    // Return transformed patches and offset
+    let offset_x = min_x;
+    let offset_y = min_y;
+
+    (output_image, output_mask, offset_x, offset_y)
+}
+
 /// Place objects onto target image with collision detection
 ///
 /// # Arguments
@@ -356,12 +478,33 @@ pub fn place_objects(
             continue; // Skip this object due to collision
         }
 
-        // For now, use the original object (not transformed patch yet)
-        // This simplifies the implementation while still achieving object placement
+        // Apply rotation and scaling transformation to the patch
+        let (transformed_image, transformed_mask, offset_x, offset_y) =
+            if rotation != 0.0 || (scale - 1.0).abs() > 1e-6 {
+                transform_patch(&obj.image, &obj.mask, rotation, scale)
+            } else {
+                (obj.image.clone(), obj.mask.clone(), 0.0, 0.0)
+            };
+
+        // Adjust bbox position based on the transformation offset
+        let adjusted_x_min = clipped_bbox.0 + offset_x;
+        let adjusted_y_min = clipped_bbox.1 + offset_y;
+        let patch_width = transformed_image.shape()[1] as f32;
+        let patch_height = transformed_image.shape()[0] as f32;
+        let adjusted_bbox = (
+            adjusted_x_min,
+            adjusted_y_min,
+            adjusted_x_min + patch_width,
+            adjusted_y_min + patch_height,
+        );
+
+        // Clip adjusted bbox to image bounds
+        let final_bbox = clip_bbox_to_image(adjusted_bbox, image_width, image_height);
+
         let placed_obj = PlacedObject {
-            bbox: clipped_bbox,
-            image: obj.image.clone(),
-            mask: obj.mask.clone(),
+            bbox: final_bbox,
+            image: transformed_image,
+            mask: transformed_mask,
             class_id: obj.class_id,
         };
 
