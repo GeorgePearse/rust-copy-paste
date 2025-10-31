@@ -13,7 +13,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 from copy_paste import RustCopyPaste
 
 
@@ -99,7 +98,7 @@ def main():
         # Create minimal results dict for transform
         results_dict = {
             "img": original_img.copy(),
-            "gt_bboxes": torch.zeros((0, 4), dtype=torch.float32),
+            "gt_bboxes": np.zeros((0, 4), dtype=np.float32),
             "gt_bboxes_labels": np.array([], dtype=np.int64),
             "gt_masks": np.zeros((0, height, width), dtype=np.uint8),
             "gt_ignore_flags": np.array([], dtype=bool),
