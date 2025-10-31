@@ -15,6 +15,7 @@ pub struct AffineTransform {
 
 impl AffineTransform {
     /// Create a new affine transformation
+    #[allow(dead_code)]
     pub fn new(rotation: f32, scale: f32, tx: f32, ty: f32) -> Self {
         let matrix = create_affine_matrix(rotation, scale, tx, ty);
         AffineTransform {
@@ -48,6 +49,7 @@ impl AffineTransform {
 }
 
 /// Create a 2x3 affine transformation matrix
+#[allow(dead_code)]
 fn create_affine_matrix(rotation: f32, scale: f32, tx: f32, ty: f32) -> Array2<f32> {
     let rad = rotation * PI / 180.0;
     let cos_a = rad.cos();
@@ -69,6 +71,7 @@ fn create_affine_matrix(rotation: f32, scale: f32, tx: f32, ty: f32) -> Array2<f
 }
 
 /// Apply affine transformation to a point
+#[allow(dead_code)]
 pub fn apply_affine_transform(point: (f32, f32), transform: &AffineTransform) -> (f32, f32) {
     let x = point.0;
     let y = point.1;

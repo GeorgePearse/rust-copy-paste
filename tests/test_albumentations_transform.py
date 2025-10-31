@@ -4,11 +4,15 @@ import numpy as np
 import pytest
 
 try:
-    import albumentations as A
+    import albumentations as A  # type: ignore[import-untyped]
 except ImportError:
     pytest.skip("albumentations not installed", allow_module_level=True)
 
 from copy_paste import CopyPasteAugmentation, SimpleCopyPaste
+from copy_paste.transform import RUST_AVAILABLE
+
+if not RUST_AVAILABLE:
+    pytest.skip("Rust extension not built; skipping CopyPasteAugmentation tests", allow_module_level=True)
 
 
 @pytest.fixture
@@ -76,8 +80,7 @@ def test_apply_basic_image(sample_transform, sample_image):
 def test_apply_to_bboxes(sample_transform, sample_bboxes):
     """Test that apply_to_bboxes method works."""
     result = sample_transform.apply_to_bboxes(sample_bboxes)
-    assert result.shape == sample_bboxes.shape
-    np.testing.assert_array_equal(result, sample_bboxes)
+    assert result.shape == (0, 6)
 
 
 def test_apply_to_masks(sample_transform, sample_masks):
@@ -240,7 +243,38 @@ def test_empty_bboxes(sample_transform):
     """Test transform with empty bounding boxes."""
     empty_bboxes = np.empty((0, 5), dtype=np.float32)
     result = sample_transform.apply_to_bboxes(empty_bboxes)
-    assert result.shape == (0, 5)
+    assert result.shape == (0, 6)
+
+
+def test_apply_to_bboxes_with_rotation():
+    """Ensure rotation metadata propagates to bbox outputs."""
+    transform = CopyPasteAugmentation(
+        image_width=64,
+        image_height=64,
+        max_paste_objects=1,
+        use_rotation=True,
+        rotation_range=(-45.0, -45.0),
+        use_scaling=False,
+        use_random_background=False,
+        p=1.0,
+    )
+
+    image = np.zeros((64, 64, 3), dtype=np.uint8)
+    mask = np.zeros((64, 64), dtype=np.uint8)
+    mask[20:36, 20:36] = 255
+
+    transform.apply(image, mask=mask)
+
+    transformed_bboxes = transform.apply_to_bboxes(np.empty((0, 5), dtype=np.float32))
+    assert transformed_bboxes.shape[1] == 6
+    assert transformed_bboxes.shape[0] >= 1
+
+    # Coordinates are normalized; ensure they fall inside the unit interval
+    np.testing.assert_array_less(transformed_bboxes[:, :4], 1.01)
+    assert np.all(transformed_bboxes[:, :4] >= 0.0)
+
+    # Angle column should reflect the forced rotation (-45 degrees)
+    assert np.isclose(transformed_bboxes[0, 5], -45.0, atol=1.0)
 
 
 def test_empty_masks(sample_transform):

@@ -1,13 +1,13 @@
 """Albumentations-compatible copy-paste augmentation using Rust implementation."""
 
-from typing import Any
+from typing import Any, Dict, Optional
 
-import albumentations as A
+import albumentations as A  # type: ignore[import-untyped]
 import numpy as np
 from loguru import logger
 
 try:
-    from copy_paste._core import CopyPasteTransform
+    from copy_paste._core import CopyPasteTransform  # type: ignore[import-untyped]
     RUST_AVAILABLE = True
 except ImportError:
     logger.warning("copy_paste Rust module not available. Build with: maturin develop")
@@ -58,7 +58,7 @@ class CopyPasteAugmentation(A.DualTransform):
         scale_range: tuple[float, float] = (0.8, 1.2),
         use_random_background: bool = False,
         blend_mode: str = "normal",
-        object_counts: dict[str, int] | None = None,
+        object_counts: Optional[Dict[str, int]] = None,
         p: float = 1.0,
     ):
         """Initialize the CopyPasteAugmentation transform.
@@ -86,7 +86,7 @@ class CopyPasteAugmentation(A.DualTransform):
         self.use_random_background = use_random_background
         self.blend_mode = blend_mode
         self.object_counts = object_counts or {}
-        self._last_mask_output: np.ndarray | None = None
+        self._last_mask_output: Optional[np.ndarray] = None
 
         # Initialize Rust transform
         self.rust_transform = CopyPasteTransform(
@@ -98,6 +98,8 @@ class CopyPasteAugmentation(A.DualTransform):
             use_random_background=use_random_background,
             blend_mode=blend_mode,
             object_counts=self.object_counts if self.object_counts else None,
+            rotation_range=rotation_range,
+            scale_range=scale_range,
         )
 
         logger.info(
@@ -201,43 +203,46 @@ class CopyPasteAugmentation(A.DualTransform):
                    Values should be in range [0, 1]
 
         Returns:
-            Transformed bounding boxes in same format
+            Transformed bounding boxes with rotation metadata [x_min, y_min, x_max, y_max, class_id, rotation_angle]
         """
-        if len(bboxes) == 0:
-            return bboxes
-
-        # Validate input format
-        if bboxes.shape[1] < 4:
+        # Validate input format if not empty
+        if len(bboxes) > 0 and bboxes.shape[1] < 4:
             raise ValueError(
                 f"Bboxes must have at least 4 columns [x_min, y_min, x_max, y_max], got {bboxes.shape}"
             )
 
-        # For copy-paste: bboxes may be added/removed/moved based on pasted objects
-        # The actual transformation happens in the Rust layer
-        # Currently returns unchanged bboxes
+        # For copy-paste: bboxes are generated from the placed objects inside Rust
+        # and now include rotation metadata.
         try:
-            # Convert normalized coords to pixel coords for Rust
-            pixel_bboxes = bboxes.copy()
-            pixel_bboxes[:, 0] *= self.image_width  # x_min
-            pixel_bboxes[:, 1] *= self.image_height  # y_min
-            pixel_bboxes[:, 2] *= self.image_width  # x_max
-            pixel_bboxes[:, 3] *= self.image_height  # y_max
+            transformed = self.rust_transform.apply_to_bboxes(
+                bboxes.astype(np.float32).ravel()
+            )
 
-            # Call Rust transformation
-            transformed = self.rust_transform.apply_to_bboxes(pixel_bboxes[:, :4].astype(np.float32))
+            transformed = np.asarray(transformed, dtype=np.float32)
+            if transformed.size == 0:
+                return np.empty((0, 6), dtype=np.float32)
 
-            # Convert back to normalized coords
-            result = bboxes.copy()
-            if len(transformed) > 0:
-                result[:, 0] = transformed[:, 0] / self.image_width
-                result[:, 1] = transformed[:, 1] / self.image_height
-                result[:, 2] = transformed[:, 2] / self.image_width
-                result[:, 3] = transformed[:, 3] / self.image_height
+            if transformed.size % 6 != 0:
+                raise ValueError(
+                    "Unexpected bbox metadata size returned from Rust—expected multiples of 6"
+                )
+
+            transformed = transformed.reshape((-1, 6))
+
+            result = np.empty_like(transformed)
+            # Normalize spatial coordinates back to [0, 1]
+            result[:, 0] = transformed[:, 0] / self.image_width
+            result[:, 1] = transformed[:, 1] / self.image_height
+            result[:, 2] = transformed[:, 2] / self.image_width
+            result[:, 3] = transformed[:, 3] / self.image_height
+            # Preserve class id and rotation angle (degrees)
+            result[:, 4] = transformed[:, 4]
+            result[:, 5] = transformed[:, 5]
 
             return result
         except Exception as e:
             logger.warning(f"Bbox transformation failed: {e}, returning original bboxes")
-            return bboxes
+            return np.empty((0, 6), dtype=np.float32)
 
     @staticmethod
     def _ensure_uint8(array: np.ndarray) -> np.ndarray:
@@ -247,7 +252,7 @@ class CopyPasteAugmentation(A.DualTransform):
             return (array * 255).astype(np.uint8)
         return array.astype(np.uint8)
 
-    def _prepare_mask(self, mask: np.ndarray | None, height: int, width: int) -> np.ndarray:
+    def _prepare_mask(self, mask: Optional[np.ndarray], height: int, width: int) -> np.ndarray:
         if mask is None:
             return np.zeros((height, width, 1), dtype=np.uint8)
 
@@ -271,8 +276,8 @@ class CopyPasteAugmentation(A.DualTransform):
 
     @staticmethod
     def _normalize_mask_output(
-        mask: np.ndarray, fallback: np.ndarray | None
-    ) -> np.ndarray | None:
+        mask: np.ndarray, fallback: Optional[np.ndarray]
+    ) -> Optional[np.ndarray]:
         mask = np.asarray(mask)
         if mask.ndim == 3 and mask.shape[2] == 1:
             return mask[..., 0].astype(np.uint8)

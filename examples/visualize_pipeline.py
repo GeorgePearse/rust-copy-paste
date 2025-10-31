@@ -13,7 +13,7 @@ import argparse
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 try:
     from copy_paste import CopyPasteAugmentation
@@ -45,80 +45,89 @@ CLASS_COLORS = {
 
 def draw_bboxes(
     image: np.ndarray,
-    bboxes: List[Tuple[float, float, float, float]],
+    bboxes: List[Tuple[np.ndarray, float]],
     class_names: List[str],
-    confidence: List[float] = None,
+    confidence: Optional[List[float]] = None,
 ) -> np.ndarray:
-    """Draw bounding boxes with class labels on image.
+    """Draw oriented bounding boxes with class labels on an image.
 
     Args:
-        image: Input image (H, W, 3) in BGR
-        bboxes: List of (x_min, y_min, x_max, y_max) in pixel coordinates
-        class_names: List of class names corresponding to each bbox
-        confidence: Optional confidence scores for each bbox
+        image: Input image (H, W, 3) in BGR.
+        bboxes: List of oriented bounding boxes as ``(points, angle)`` where
+            ``points`` is an array-like of shape (4, 2) ordered clockwise.
+        class_names: List of class names corresponding to each bbox.
+        confidence: Optional confidence scores for each bbox.
 
     Returns:
-        Image with drawn bounding boxes and labels
+        Image with drawn oriented bounding boxes and labels.
     """
     output = image.copy()
 
-    for i, (bbox, class_name) in enumerate(zip(bboxes, class_names)):
-        x_min, y_min, x_max, y_max = bbox
-        x_min, y_min, x_max, y_max = int(x_min), int(y_min), int(x_max), int(y_max)
+    for i, (bbox_info, class_name) in enumerate(zip(bboxes, class_names)):
+        points, angle = bbox_info
+        pts = np.array(points, dtype=np.int32)
 
         # Get color for this class
         color = CLASS_COLORS.get(class_name, (200, 200, 200))
 
-        # Draw rectangle
-        cv2.rectangle(output, (x_min, y_min), (x_max, y_max), color, 2)
+        # Draw oriented rectangle
+        cv2.polylines(output, [pts], isClosed=True, color=color, thickness=2)
 
-        # Create label text
+        # Create label text (include angle for context)
         if confidence and i < len(confidence):
-            label = f"{class_name} {confidence[i]:.2f}"
+            label = f"{class_name} {confidence[i]:.2f} | {angle:.1f}°"
         else:
-            label = class_name
+            label = f"{class_name} | {angle:.1f}°"
 
-        # Get text size for background
+        # Determine label placement near the top-most point
+        top_idx = int(np.argmin(pts[:, 1]))
+        label_anchor = pts[top_idx]
+        x_min = int(np.min(pts[:, 0]))
+        y_min = int(np.min(pts[:, 1]))
+
         font_face = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.6
+        font_scale = 0.5
         thickness = 1
         text_size = cv2.getTextSize(label, font_face, font_scale, thickness)[0]
 
-        # Draw label background
-        label_bg_color = tuple(int(c * 0.7) for c in color)  # Darker version of color
+        # Offset the label slightly above the shape while keeping it within frame bounds
+        text_x = max(0, min(label_anchor[0], output.shape[1] - text_size[0] - 4))
+        text_y = max(text_size[1] + 4, y_min)
+
+        label_bg_color = tuple(int(c * 0.7) for c in color)
         cv2.rectangle(
             output,
-            (x_min, y_min - text_size[1] - 4),
-            (x_min + text_size[0] + 4, y_min),
+            (text_x, text_y - text_size[1] - 4),
+            (text_x + text_size[0] + 4, text_y),
             label_bg_color,
-            -1
+            -1,
         )
-
-        # Draw label text
         cv2.putText(
             output,
             label,
-            (x_min + 2, y_min - 2),
+            (text_x + 2, text_y - 4),
             font_face,
             font_scale,
-            (255, 255, 255),  # White text
-            thickness
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
         )
 
     return output
 
 
-def extract_bboxes_from_mask(mask: np.ndarray) -> Tuple[List[Tuple], List[int]]:
-    """Extract bounding boxes from segmentation mask.
+def extract_bboxes_from_mask(mask: np.ndarray) -> Tuple[List[Tuple[np.ndarray, float]], List[int]]:
+    """Extract oriented bounding boxes from a segmentation mask.
 
     Args:
-        mask: Segmentation mask (H, W) or (H, W, C) with class IDs
+        mask: Segmentation mask (H, W) or (H, W, C) with class IDs.
 
     Returns:
-        Tuple of (bboxes, class_ids) where bboxes are (x_min, y_min, x_max, y_max)
+        Tuple of (bboxes, class_ids) where each bbox is a tuple of
+        (4x2 array of corner points, rotation angle in degrees).
     """
-    bboxes = []
-    class_ids = []
+    bboxes: List[Tuple[np.ndarray, float]] = []
+    class_ids: List[int] = []
 
     # Convert to single-channel if multi-channel
     if mask.ndim == 3:
@@ -144,10 +153,18 @@ def extract_bboxes_from_mask(mask: np.ndarray) -> Tuple[List[Tuple], List[int]]:
         contours, _ = cv2.findContours(class_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            if w > 0 and h > 0:  # Only valid bboxes
-                bboxes.append((float(x), float(y), float(x + w), float(y + h)))
-                class_ids.append(int(class_id))
+            if len(contour) < 3:
+                continue  # Need at least a triangle to compute orientation
+
+            rect = cv2.minAreaRect(contour)
+            (cx, cy), (w, h), angle = rect
+
+            if w == 0 or h == 0:
+                continue
+
+            box = cv2.boxPoints(rect)
+            bboxes.append((box, angle))
+            class_ids.append(int(class_id))
 
     return bboxes, class_ids
 
@@ -255,8 +272,8 @@ def visualize_pipeline(
         else:
             raise
 
-    # Step 1: Save input image with original bounding boxes
-    print("\n[1] Extracting objects from input mask...")
+    # Step 1: Save input image with original oriented bounding boxes
+    print("\n[1] Extracting objects from input mask (oriented bboxes)...")
     input_bboxes, input_class_ids = extract_bboxes_from_mask(input_mask)
     input_class_names = [
         COCO_CLASSES.get(class_id, f'class_{class_id}')
@@ -287,8 +304,8 @@ def visualize_pipeline(
         augmented_image = input_image.copy()
         augmented = {'image': augmented_image}
 
-    # Step 3: Extract and visualize output bounding boxes
-    print("\n[3] Extracting pasted objects from output...")
+    # Step 3: Extract and visualize output oriented bounding boxes
+    print("\n[3] Extracting pasted objects from output (oriented bboxes)...")
     output_bboxes, output_class_ids = extract_bboxes_from_mask(augmented['image'] if 'image' in augmented else input_mask)
 
     # Note: Since we don't have class ID info from Rust directly, we'll use a placeholder
