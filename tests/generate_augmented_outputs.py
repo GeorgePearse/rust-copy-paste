@@ -13,7 +13,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from copy_paste import RustCopyPaste
+from copy_paste import CopyPasteAugmentation, SimpleCopyPaste
 
 
 def main():
@@ -46,7 +46,7 @@ def main():
 
     # Create transform
     try:
-        transform = RustCopyPaste(
+        transform = CopyPasteAugmentation(
             target_image_width=512,
             target_image_height=512,
             mm_class_list=class_list,
@@ -57,12 +57,10 @@ def main():
             rotation_range=(0, 360),
             verbose=True,
         )
-        print("🦀 Using RustCopyPaste transform")
+        print("🦀 Using CopyPasteAugmentation transform")
     except RuntimeError:
-        # Fallback to CustomCopyPaste if Rust not available
-        from copy_paste import CustomCopyPaste
-
-        transform = CustomCopyPaste(
+        # Fallback to SimpleCopyPaste if Rust not available
+        transform = SimpleCopyPaste(
             target_image_width=512,
             target_image_height=512,
             mm_class_list=class_list,
@@ -73,7 +71,7 @@ def main():
             rotation_range=(0, 360),
             verbose=True,
         )
-        print("🐍 Using CustomCopyPaste transform (Rust not available)")
+        print("🐍 Using SimpleCopyPaste transform (Rust not available)")
 
     # Process up to 5 images
     results = []
