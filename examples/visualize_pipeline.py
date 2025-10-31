@@ -274,11 +274,11 @@ def visualize_pipeline(
     # Step 2: Apply augmentation
     print("\n[2] Applying copy-paste augmentation...")
 
-    # Convert 2D mask to 3D if needed
-    mask_3d = input_mask if input_mask.ndim == 3 else cv2.cvtColor(input_mask, cv2.COLOR_GRAY2BGR)
+    # Ensure mask is 2D for the transform
+    mask_2d = input_mask if input_mask.ndim == 2 else input_mask[:, :, 0]
 
     try:
-        augmented = transform(image=input_image, mask=mask_3d)
+        augmented = transform(image=input_image, mask=mask_2d)
         augmented_image = augmented['image']
         print("   ✓ Augmentation complete")
     except Exception as e:

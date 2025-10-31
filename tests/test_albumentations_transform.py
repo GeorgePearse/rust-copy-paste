@@ -216,6 +216,7 @@ def test_get_transform_init_args_names(sample_transform):
         "scale_range",
         "use_random_background",
         "blend_mode",
+        "object_counts",  # Optional per-class object counts
         "p",
     }
 
