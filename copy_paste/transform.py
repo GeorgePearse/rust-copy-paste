@@ -98,6 +98,8 @@ class CopyPasteAugmentation(A.DualTransform):
             use_random_background=use_random_background,
             blend_mode=blend_mode,
             object_counts=self.object_counts if self.object_counts else None,
+            rotation_range=rotation_range,
+            scale_range=scale_range,
         )
 
         logger.info(
@@ -201,13 +203,10 @@ class CopyPasteAugmentation(A.DualTransform):
                    Values should be in range [0, 1]
 
         Returns:
-            Transformed bounding boxes in same format
+            Transformed bounding boxes with rotation metadata [x_min, y_min, x_max, y_max, class_id, rotation_angle]
         """
-        if len(bboxes) == 0:
-            return bboxes
-
-        # Validate input format
-        if bboxes.shape[1] < 4:
+        # Validate input format if not empty
+        if len(bboxes) > 0 and bboxes.shape[1] < 4:
             raise ValueError(
                 f"Bboxes must have at least 4 columns [x_min, y_min, x_max, y_max], got {bboxes.shape}"
             )

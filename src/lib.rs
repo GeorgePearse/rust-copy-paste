@@ -116,7 +116,7 @@ pub struct CopyPasteTransform {
 #[pymethods]
 impl CopyPasteTransform {
     #[new]
-    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, use_random_background, blend_mode, object_counts=None))]
+    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, use_random_background, blend_mode, object_counts=None, rotation_range=None, scale_range=None))]
     pub fn new(
         image_width: u32,
         image_height: u32,
@@ -126,6 +126,8 @@ impl CopyPasteTransform {
         use_random_background: bool,
         blend_mode: String,
         object_counts: Option<HashMap<u32, u32>>,
+        rotation_range: Option<(f32, f32)>,
+        scale_range: Option<(f32, f32)>,
     ) -> Self {
         CopyPasteTransform {
             config: AugmentationConfig {
@@ -135,8 +137,8 @@ impl CopyPasteTransform {
                 object_counts: object_counts.unwrap_or_default(),
                 use_rotation,
                 use_scaling,
-                rotation_range: (-30.0, 30.0),
-                scale_range: (0.8, 1.2),
+                rotation_range: rotation_range.unwrap_or((-30.0, 30.0)),
+                scale_range: scale_range.unwrap_or((0.8, 1.2)),
                 use_random_background,
                 blend_mode,
             },

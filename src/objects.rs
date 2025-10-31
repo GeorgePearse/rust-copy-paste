@@ -209,15 +209,15 @@ pub fn select_objects_by_class(
     let mut total_selected = 0usize;
     let global_cap = max_paste_objects as usize;
 
-    for (class_id, count) in object_counts.iter() {
-        if total_selected >= global_cap {
-            break;
-        }
+    // If object_counts is empty, select from all available classes
+    if object_counts.is_empty() {
+        for (_class_id, objects) in available_objects.iter() {
+            if total_selected >= global_cap {
+                break;
+            }
 
-        if let Some(objects) = available_objects.get(class_id) {
             let remaining_global = global_cap - total_selected;
-            let per_class_cap = (*count as usize).min(objects.len());
-            let count_to_select = per_class_cap.min(remaining_global);
+            let count_to_select = objects.len().min(remaining_global);
 
             if count_to_select == 0 {
                 continue;
@@ -232,6 +232,33 @@ pub fn select_objects_by_class(
             }
 
             total_selected += count_to_select;
+        }
+    } else {
+        // Use specified object counts per class
+        for (class_id, count) in object_counts.iter() {
+            if total_selected >= global_cap {
+                break;
+            }
+
+            if let Some(objects) = available_objects.get(class_id) {
+                let remaining_global = global_cap - total_selected;
+                let per_class_cap = (*count as usize).min(objects.len());
+                let count_to_select = per_class_cap.min(remaining_global);
+
+                if count_to_select == 0 {
+                    continue;
+                }
+
+                // Random selection without replacement
+                let mut indices: Vec<usize> = (0..objects.len()).collect();
+                for i in 0..count_to_select {
+                    let j = i + rng.gen_range(0..(indices.len() - i));
+                    indices.swap(i, j);
+                    selected.push(objects[indices[i]].clone());
+                }
+
+                total_selected += count_to_select;
+            }
         }
     }
 
