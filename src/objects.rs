@@ -131,6 +131,7 @@ fn extract_object_patch(
     let patch_height = (y_max - y_min) as usize;
     let patch_width = (x_max - x_min) as usize;
     let channels = image.shape()[2];
+    let mask_channels = mask.shape()[2];
 
     if patch_height == 0 || patch_width == 0 {
         return None;
@@ -157,7 +158,9 @@ fn extract_object_patch(
 
                 for c in 0..channels {
                     patch_image[[y, x, c]] = image[[src_y, src_x, c]];
-                    patch_mask[[y, x, c]] = mask[[src_y, src_x, c]];
+
+                    let mask_channel = if c < mask_channels { c } else { 0 };
+                    patch_mask[[y, x, c]] = mask[[src_y, src_x, mask_channel]];
                 }
             }
         }
@@ -246,6 +249,8 @@ pub struct PlacedObject {
     pub mask: Array3<u8>,
     /// Class ID
     pub class_id: u32,
+    /// Rotation in degrees applied to the object
+    pub rotation: f32,
 }
 
 /// Transform a patch using rotation and scaling with bilinear interpolation
@@ -541,6 +546,7 @@ pub fn place_objects(
             image: transformed_image,
             mask: transformed_mask,
             class_id: obj.class_id,
+            rotation,
         };
 
         placed.push(placed_obj);
@@ -635,6 +641,19 @@ pub fn compose_objects(
 #[allow(dead_code)]
 pub fn generate_output_bboxes(placed_objects: &[PlacedObject]) -> Vec<(f32, f32, f32, f32)> {
     placed_objects.iter().map(|obj| obj.bbox).collect()
+}
+
+/// Generate axis-aligned bounding boxes along with rotation metadata.
+///
+/// Each entry is `[x_min, y_min, x_max, y_max, class_id, rotation_deg]`.
+pub fn generate_output_bboxes_with_rotation(placed_objects: &[PlacedObject]) -> Vec<[f32; 6]> {
+    placed_objects
+        .iter()
+        .map(|obj| {
+            let (x_min, y_min, x_max, y_max) = obj.bbox;
+            [x_min, y_min, x_max, y_max, obj.class_id as f32, obj.rotation]
+        })
+        .collect()
 }
 
 /// Update output mask with placed objects
@@ -809,6 +828,7 @@ mod tests {
             image: obj_image,
             mask: obj_mask,
             class_id: 0,
+            rotation: 0.0,
         }];
 
         compose_objects(&mut output_image, &placed, BlendMode::Normal);
@@ -836,6 +856,7 @@ mod tests {
             image: Array3::zeros((10, 10, 3)),
             mask: obj_mask,
             class_id: 5,
+            rotation: 0.0,
         }];
 
         update_output_mask(&mut output_mask, &placed);

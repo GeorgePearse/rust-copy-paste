@@ -3,6 +3,7 @@ use numpy::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 mod affine;
@@ -109,6 +110,7 @@ impl ObjectPaste {
 #[pyclass]
 pub struct CopyPasteTransform {
     config: AugmentationConfig,
+    last_placed: RefCell<Vec<objects::PlacedObject>>,
 }
 
 #[pymethods]
@@ -138,6 +140,7 @@ impl CopyPasteTransform {
                 use_random_background,
                 blend_mode,
             },
+            last_placed: RefCell::new(Vec::new()),
         }
     }
 
@@ -173,7 +176,7 @@ impl CopyPasteTransform {
         let width = image_shape[1] as u32;
         let config = self.config.clone();
 
-        py.allow_threads(|| {
+        let placed_objects = py.allow_threads(|| {
             let extracted_objects =
                 objects::extract_objects_from_mask(output_image.view(), mask_array.view());
 
@@ -205,7 +208,11 @@ impl CopyPasteTransform {
             let blend_mode = blending::BlendMode::from_string(&config.blend_mode);
             objects::compose_objects(&mut output_image, &placed_objects, blend_mode);
             objects::update_output_mask(&mut output_mask, &placed_objects);
+
+            placed_objects
         });
+
+        self.last_placed.replace(placed_objects.clone());
 
         Ok((
             output_image.into_pyarray_bound(py).unbind(),
@@ -219,9 +226,22 @@ impl CopyPasteTransform {
         py: Python<'_>,
         bboxes: PyReadonlyArray1<f32>,
     ) -> PyResult<Py<PyArray1<f32>>> {
-        let bboxes_array = bboxes.as_array().to_owned();
-        // This is a placeholder - in full implementation, would update bboxes based on paste operations
-        Ok(bboxes_array.into_pyarray_bound(py).unbind())
+        let placed_objects = self.last_placed.borrow();
+
+        if placed_objects.is_empty() {
+            // No placement has happened yet; return original input unchanged
+            let bboxes_array = bboxes.as_array().to_owned();
+            return Ok(bboxes_array.into_pyarray_bound(py).unbind());
+        }
+
+        let metadata = objects::generate_output_bboxes_with_rotation(&placed_objects);
+        let flat: Vec<f32> = metadata
+            .iter()
+            .flat_map(|row| row.iter())
+            .copied()
+            .collect();
+
+        Ok(PyArray1::from_vec_bound(py, flat).unbind())
     }
 
     /// Get configuration
