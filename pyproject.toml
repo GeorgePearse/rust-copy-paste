@@ -38,6 +38,11 @@ Repository = "https://github.com/yourusername/simple-copy-paste"
 Issues = "https://github.com/yourusername/simple-copy-paste/issues"
 
 [project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-benchmark>=5.0.0",
+    "psutil>=5.9.0",
+]
 benchmarks = [
     "pytest-benchmark>=5.0.0",
     "psutil>=5.9.0",

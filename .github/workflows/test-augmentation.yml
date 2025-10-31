@@ -31,17 +31,12 @@ jobs:
 
       - name: Create virtual environment and install dependencies
         run: |
-          uv sync
+          uv sync --extra dev
 
       - name: Build Rust extension with Maturin
         run: |
           source .venv/bin/activate
           maturin develop
-
-      - name: Install test dependencies
-        run: |
-          source .venv/bin/activate
-          pip install pytest opencv-python-headless
 
       - name: Run Rust integration tests
         run: |
