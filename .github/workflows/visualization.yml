@@ -83,7 +83,7 @@ jobs:
           fi
 
       - name: Create PR comment with visualization summary
-        if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+        if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && always()
         continue-on-error: true
         uses: actions/github-script@v7
         with:
@@ -92,29 +92,55 @@ jobs:
             const path = require('path');
 
             const visualDir = 'examples/visual_outputs/pipeline_stages';
-            let fileCount = 0;
-            let fileList = '';
+            let comment = '## 📊 Copy-Paste Augmentation Pipeline Visualization\n\n';
 
             if (fs.existsSync(visualDir)) {
-              const files = fs.readdirSync(visualDir).filter(f => f.endsWith('.jpg')).slice(0, 5);
-              fileCount = files.length;
-              if (files.length > 0) {
-                fileList = '**Generated Files:**\n' + files.map(f => `- ${f}`).join('\n');
+              const allFiles = fs.readdirSync(visualDir).filter(f => f.endsWith('.jpg')).sort();
+
+              if (allFiles.length > 0) {
+                comment += '✅ **Visualization pipeline executed successfully!**\n\n';
+                comment += '### Generated Outputs\n\n';
+                comment += 'The following visualization images have been generated:\n\n';
+
+                // Describe each type of visualization
+                const descriptions = {
+                  'input_with_bboxes': 'Input image with original object bounding boxes and labels',
+                  'augmented_with_bboxes': 'Augmented image showing pasted objects with labels',
+                  'comparison': 'Side-by-side comparison of input vs augmented image'
+                };
+
+                for (const [key, description] of Object.entries(descriptions)) {
+                  const file = allFiles.find(f => f.includes(key));
+                  if (file) {
+                    comment += `- **${key.replace(/_/g, ' ')}**: ${description}\n`;
+                  }
+                }
+
+                comment += '\n### Download Artifacts\n\n';
+                comment += `All visualization images are available as artifacts in the [GitHub Actions run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for 30 days.\n\n`;
+                comment += 'To view the images:\n';
+                comment += '1. Go to the "Visualize Pipeline" job in the Actions tab\n';
+                comment += '2. Scroll to the "Artifacts" section\n';
+                comment += '3. Download the "pipeline-visualizations" artifact\n\n';
+
+                comment += '### File List\n\n';
+                const fileList = allFiles.map(f => `- ${f}`).join('\n');
+                comment += fileList + '\n';
+              } else {
+                comment += '⚠️ **No visualization images were generated.**\n';
               }
+            } else {
+              comment += '⚠️ **No visualization outputs directory found.**\n';
             }
 
-            let comment = '## 📊 Copy-Paste Augmentation Pipeline Visualization\n\n';
-            comment += '✅ Visual outputs generated from this PR:\n\n';
-            comment += `- **Visualizations Generated:** ${fileCount} images\n`;
-            comment += '- **Status:** Pipeline execution successful\n';
-            comment += '- **Artifacts:** Available in GitHub Actions artifacts\n\n';
-            if (fileList) {
-              comment += fileList;
+            try {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+              console.log('PR comment created successfully');
+            } catch (error) {
+              console.log(`Failed to create comment: ${error.message}`);
             }
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            })
