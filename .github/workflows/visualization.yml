@@ -1,5 +1,6 @@
 name: Visualize Pipeline
 
+# This workflow generates visual outputs for every PR to help review augmentation changes
 on:
   pull_request:
     branches: [master, main, develop]
