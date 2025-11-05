@@ -8,13 +8,11 @@ compatible with the metrics visualization website.
 import json
 import os
 import platform
-import re
-import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 
 def get_system_info() -> dict:
@@ -120,8 +118,6 @@ def run_benchmarks() -> dict:
                 metrics[key] = [round(throughput, 2), "img/s"]
 
             # Store min/max for reference
-            iqr = stats.get("iqr", 0)
-            min_val = stats.get("min", 0)
             max_val = stats.get("max", 0)
 
             if max_val > 0:

@@ -12,7 +12,10 @@ from copy_paste import CopyPasteAugmentation, SimpleCopyPaste
 from copy_paste.transform import RUST_AVAILABLE
 
 if not RUST_AVAILABLE:
-    pytest.skip("Rust extension not built; skipping CopyPasteAugmentation tests", allow_module_level=True)
+    pytest.skip(
+        "Rust extension not built; skipping CopyPasteAugmentation tests",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture
@@ -42,10 +45,12 @@ def sample_bboxes():
     Format: [x_min, y_min, x_max, y_max, class_label]
     Values are normalized (0-1)
     """
-    return np.array([
-        [0.1, 0.1, 0.3, 0.3, 0],  # Class 0
-        [0.5, 0.5, 0.7, 0.7, 1],  # Class 1
-    ])
+    return np.array(
+        [
+            [0.1, 0.1, 0.3, 0.3, 0],  # Class 0
+            [0.5, 0.5, 0.7, 0.7, 1],  # Class 1
+        ]
+    )
 
 
 @pytest.fixture
@@ -139,9 +144,9 @@ def test_transform_probability_zero():
         p=0.0,  # Never apply
     )
 
-    image = np.ones((512, 512, 3), dtype=np.uint8) * 100
     # When p=0, the transform's __call__ should not modify the image
-    # For now, we're just testing that it doesn't error
+    # Just testing that initialization doesn't error
+    assert transform is not None
 
 
 def test_transform_with_rotation():

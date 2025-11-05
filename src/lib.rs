@@ -147,6 +147,7 @@ impl CopyPasteTransform {
     }
 
     /// Apply copy-paste augmentation to image and masks
+    #[allow(clippy::useless_conversion)]
     pub fn apply(
         &self,
         py: Python<'_>,
@@ -223,6 +224,7 @@ impl CopyPasteTransform {
     }
 
     /// Apply augmentation with bounding boxes (Albumentations format)
+    #[allow(clippy::useless_conversion)]
     pub fn apply_to_bboxes(
         &self,
         py: Python<'_>,

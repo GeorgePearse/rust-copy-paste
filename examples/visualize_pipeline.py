@@ -24,22 +24,38 @@ except ImportError:
 
 # COCO class names
 COCO_CLASSES = {
-    0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 4: 'airplane',
-    5: 'bus', 6: 'train', 7: 'truck', 8: 'boat', 9: 'traffic light',
-    10: 'fire hydrant', 11: 'stop sign', 12: 'parking meter', 13: 'bench',
-    14: 'cat', 15: 'dog', 16: 'horse', 17: 'sheep', 18: 'cow', 19: 'elephant',
+    0: "person",
+    1: "bicycle",
+    2: "car",
+    3: "motorcycle",
+    4: "airplane",
+    5: "bus",
+    6: "train",
+    7: "truck",
+    8: "boat",
+    9: "traffic light",
+    10: "fire hydrant",
+    11: "stop sign",
+    12: "parking meter",
+    13: "bench",
+    14: "cat",
+    15: "dog",
+    16: "horse",
+    17: "sheep",
+    18: "cow",
+    19: "elephant",
 }
 
 # Colors for different classes (BGR format for OpenCV)
 CLASS_COLORS = {
-    'person': (0, 255, 0),      # Green
-    'car': (0, 0, 255),          # Red
-    'bicycle': (255, 0, 0),      # Blue
-    'truck': (0, 165, 255),      # Orange
-    'bus': (255, 165, 0),        # Cyan
-    'motorcycle': (255, 0, 255), # Magenta
-    'dog': (0, 255, 255),        # Yellow
-    'cat': (255, 255, 0),        # Cyan
+    "person": (0, 255, 0),  # Green
+    "car": (0, 0, 255),  # Red
+    "bicycle": (255, 0, 0),  # Blue
+    "truck": (0, 165, 255),  # Orange
+    "bus": (255, 165, 0),  # Cyan
+    "motorcycle": (255, 0, 255),  # Magenta
+    "dog": (0, 255, 255),  # Yellow
+    "cat": (255, 255, 0),  # Cyan
 }
 
 
@@ -82,7 +98,6 @@ def draw_bboxes(
         # Determine label placement near the top-most point
         top_idx = int(np.argmin(pts[:, 1]))
         label_anchor = pts[top_idx]
-        x_min = int(np.min(pts[:, 0]))
         y_min = int(np.min(pts[:, 1]))
 
         font_face = cv2.FONT_HERSHEY_SIMPLEX
@@ -116,7 +131,9 @@ def draw_bboxes(
     return output
 
 
-def extract_bboxes_from_mask(mask: np.ndarray) -> Tuple[List[Tuple[np.ndarray, float]], List[int]]:
+def extract_bboxes_from_mask(
+    mask: np.ndarray
+) -> Tuple[List[Tuple[np.ndarray, float]], List[int]]:
     """Extract oriented bounding boxes from a segmentation mask.
 
     Args:
@@ -150,7 +167,9 @@ def extract_bboxes_from_mask(mask: np.ndarray) -> Tuple[List[Tuple[np.ndarray, f
         class_mask = (mask == class_id).astype(np.uint8)
 
         # Find contours
-        contours, _ = cv2.findContours(class_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            class_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
 
         for contour in contours:
             if len(contour) < 3:
@@ -231,31 +250,34 @@ def visualize_pipeline(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Visualizing copy-paste pipeline...")
+    print("Visualizing copy-paste pipeline...")
     print(f"Input image shape: {input_image.shape}")
     print(f"Object counts: {object_counts}")
 
     # Create default config if not provided
     if config is None:
         config = {
-            'image_width': input_image.shape[1],
-            'image_height': input_image.shape[0],
-            'use_rotation': True,
-            'use_scaling': True,
-            'rotation_range': (-15, 15),
-            'scale_range': (0.9, 1.1),
-            'blend_mode': 'normal',
+            "image_width": input_image.shape[1],
+            "image_height": input_image.shape[0],
+            "use_rotation": True,
+            "use_scaling": True,
+            "rotation_range": (-15, 15),
+            "scale_range": (0.9, 1.1),
+            "blend_mode": "normal",
         }
 
         # Try to add object_counts if supported by the current build
         try:
             import inspect
+
             sig = inspect.signature(CopyPasteAugmentation.__init__)
-            if 'object_counts' in sig.parameters:
-                config['object_counts'] = object_counts
+            if "object_counts" in sig.parameters:
+                config["object_counts"] = object_counts
                 print("   ✓ Using per-class object counts")
             else:
-                print("   ⚠ object_counts not available in current build (rebuild with maturin develop)")
+                print(
+                    "   ⚠ object_counts not available in current build (rebuild with maturin develop)"
+                )
         except Exception as e:
             print(f"   ⚠ Could not check for object_counts parameter: {e}")
 
@@ -263,9 +285,9 @@ def visualize_pipeline(
     try:
         transform = CopyPasteAugmentation(**config)
     except TypeError as e:
-        if 'object_counts' in str(e):
+        if "object_counts" in str(e):
             # Fallback: remove object_counts if not supported
-            config.pop('object_counts', None)
+            config.pop("object_counts", None)
             print("   ⚠ Removing unsupported object_counts parameter, rebuilding with:")
             print("      maturin develop")
             transform = CopyPasteAugmentation(**config)
@@ -276,16 +298,11 @@ def visualize_pipeline(
     print("\n[1] Extracting objects from input mask (oriented bboxes)...")
     input_bboxes, input_class_ids = extract_bboxes_from_mask(input_mask)
     input_class_names = [
-        COCO_CLASSES.get(class_id, f'class_{class_id}')
-        for class_id in input_class_ids
+        COCO_CLASSES.get(class_id, f"class_{class_id}") for class_id in input_class_ids
     ]
 
-    input_viz = draw_bboxes(
-        input_image.copy(),
-        input_bboxes,
-        input_class_names
-    )
-    cv2.imwrite(str(output_dir / '01_input_with_bboxes.jpg'), input_viz)
+    input_viz = draw_bboxes(input_image.copy(), input_bboxes, input_class_names)
+    cv2.imwrite(str(output_dir / "01_input_with_bboxes.jpg"), input_viz)
     print(f"   ✓ Found {len(input_bboxes)} objects")
 
     # Step 2: Apply augmentation
@@ -296,98 +313,85 @@ def visualize_pipeline(
 
     try:
         augmented = transform(image=input_image, mask=mask_2d)
-        augmented_image = augmented['image']
+        augmented_image = augmented["image"]
         print("   ✓ Augmentation complete")
     except Exception as e:
         print(f"   ⚠ Augmentation failed: {e}")
         print("   Using original image as fallback")
         augmented_image = input_image.copy()
-        augmented = {'image': augmented_image}
+        augmented = {"image": augmented_image}
 
     # Step 3: Extract and visualize output oriented bounding boxes
     print("\n[3] Extracting pasted objects from output (oriented bboxes)...")
-    output_bboxes, output_class_ids = extract_bboxes_from_mask(augmented['image'] if 'image' in augmented else input_mask)
+    output_bboxes, output_class_ids = extract_bboxes_from_mask(
+        augmented["image"] if "image" in augmented else input_mask
+    )
 
     # Note: Since we don't have class ID info from Rust directly, we'll use a placeholder
     # In a full implementation, the Rust layer would return class information
     output_class_names = [
-        COCO_CLASSES.get(class_id, f'class_{class_id}')
-        for class_id in output_class_ids
+        COCO_CLASSES.get(class_id, f"class_{class_id}") for class_id in output_class_ids
     ]
 
-    output_viz = draw_bboxes(
-        augmented_image.copy(),
-        output_bboxes,
-        output_class_names
-    )
-    cv2.imwrite(str(output_dir / '05_augmented_with_bboxes.jpg'), output_viz)
+    output_viz = draw_bboxes(augmented_image.copy(), output_bboxes, output_class_names)
+    cv2.imwrite(str(output_dir / "05_augmented_with_bboxes.jpg"), output_viz)
     print(f"   ✓ Found {len(output_bboxes)} objects in output")
 
     # Step 4: Save raw outputs
     print("\n[4] Saving outputs...")
-    cv2.imwrite(str(output_dir / '01_input_image.jpg'), input_image)
-    cv2.imwrite(str(output_dir / '05_augmented_image.jpg'), augmented_image)
+    cv2.imwrite(str(output_dir / "01_input_image.jpg"), input_image)
+    cv2.imwrite(str(output_dir / "05_augmented_image.jpg"), augmented_image)
 
     # Step 5: Create comparison
     comparison = np.hstack([input_viz, output_viz])
-    cv2.imwrite(str(output_dir / '06_comparison.jpg'), comparison)
-    print(f"   ✓ Comparison saved")
+    cv2.imwrite(str(output_dir / "06_comparison.jpg"), comparison)
+    print("   ✓ Comparison saved")
 
-    print(f"\n✅ Visualization complete!")
+    print("\n✅ Visualization complete!")
     print(f"   Output directory: {output_dir}")
-    print(f"   Files generated:")
-    print(f"     - 01_input_image.jpg (original)")
-    print(f"     - 01_input_with_bboxes.jpg (with labels)")
-    print(f"     - 05_augmented_image.jpg (augmented)")
-    print(f"     - 05_augmented_with_bboxes.jpg (with labels)")
-    print(f"     - 06_comparison.jpg (side-by-side)")
+    print("   Files generated:")
+    print("     - 01_input_image.jpg (original)")
+    print("     - 01_input_with_bboxes.jpg (with labels)")
+    print("     - 05_augmented_image.jpg (augmented)")
+    print("     - 05_augmented_with_bboxes.jpg (with labels)")
+    print("     - 06_comparison.jpg (side-by-side)")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Visualize copy-paste augmentation pipeline'
+        description="Visualize copy-paste augmentation pipeline"
     )
     parser.add_argument(
-        '--input-image',
+        "--input-image",
         type=str,
-        help='Path to input image (optional, will generate synthetic data if not provided)'
+        help="Path to input image (optional, will generate synthetic data if not provided)",
     )
     parser.add_argument(
-        '--input-mask',
+        "--input-mask",
         type=str,
-        help='Path to input mask (optional, will generate synthetic data if not provided)'
+        help="Path to input mask (optional, will generate synthetic data if not provided)",
     )
     parser.add_argument(
-        '--output-dir',
+        "--output-dir",
         type=str,
-        default='examples/visual_outputs/pipeline_stages',
-        help='Output directory for visualizations'
+        default="examples/visual_outputs/pipeline_stages",
+        help="Output directory for visualizations",
     )
     parser.add_argument(
-        '--class-counts',
+        "--class-counts",
         type=str,
-        default='person:2,car:1',
-        help='Object counts as class_name:count,class_name:count'
+        default="person:2,car:1",
+        help="Object counts as class_name:count,class_name:count",
     )
-    parser.add_argument(
-        '--image-width',
-        type=int,
-        default=512,
-        help='Image width'
-    )
-    parser.add_argument(
-        '--image-height',
-        type=int,
-        default=512,
-        help='Image height'
-    )
+    parser.add_argument("--image-width", type=int, default=512, help="Image width")
+    parser.add_argument("--image-height", type=int, default=512, help="Image height")
 
     args = parser.parse_args()
 
     # Parse object counts
     object_counts = {}
-    for item in args.class_counts.split(','):
-        class_name, count = item.split(':')
+    for item in args.class_counts.split(","):
+        class_name, count = item.split(":")
         object_counts[class_name.strip()] = int(count)
 
     # Load or create input data
@@ -401,18 +405,14 @@ def main():
     else:
         print("Creating synthetic example data...")
         input_image, input_mask = create_example_data(
-            height=args.image_height,
-            width=args.image_width
+            height=args.image_height, width=args.image_width
         )
 
     # Run visualization
     visualize_pipeline(
-        input_image,
-        input_mask,
-        object_counts,
-        output_dir=args.output_dir
+        input_image, input_mask, object_counts, output_dir=args.output_dir
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
