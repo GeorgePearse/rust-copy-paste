@@ -17,53 +17,57 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 ## Visual Examples
 
-See the copy-paste augmentation in action with our test dataset. Each example shows the original image with segmentation mask overlay and class label, alongside the augmented result:
-
-### Triangles
+See the copy-paste augmentation in action with our test dataset. Each example shows the original image alongside the augmented result with objects copied, rotated, and pasted at new positions:
 
 <table>
 <tr>
-<td><b>Original</b></td>
-<td><b>Augmented</b></td>
+<td align="center"><b>Shape</b></td>
+<td align="center"><b>Original → Augmented</b></td>
+<td align="center"><b>Key Features</b></td>
 </tr>
+
 <tr>
-<td><img src="tests/augmented_outputs/labeled/triangle_original_labeled.png" width="256"/></td>
-<td><img src="tests/augmented_outputs/labeled/triangle_augmented_labeled.png" width="256"/></td>
+<td align="center"><b>Triangles</b></td>
+<td><img src="tests/augmented_outputs/labeled/triangle_comparison.png" width="512"/></td>
+<td>
+• Extracts triangle from mask<br/>
+• Applies random rotation<br/>
+• Pastes at new position<br/>
+• Clean edge blending
+</td>
+</tr>
+
+<tr>
+<td align="center"><b>Circles</b></td>
+<td><img src="tests/augmented_outputs/labeled/circle_comparison.png" width="512"/></td>
+<td>
+• Detects circular objects<br/>
+• Random positioning<br/>
+• Maintains object quality<br/>
+• No collision overlap
+</td>
+</tr>
+
+<tr>
+<td align="center"><b>Squares</b></td>
+<td><img src="tests/augmented_outputs/labeled/square_comparison.png" width="512"/></td>
+<td>
+• Preserves class labels<br/>
+• 0-360° rotation range<br/>
+• Multiple object instances<br/>
+• Proper alpha blending
+</td>
 </tr>
 </table>
 
-### Circles
-
-<table>
-<tr>
-<td><b>Original</b></td>
-<td><b>Augmented</b></td>
-</tr>
-<tr>
-<td><img src="tests/augmented_outputs/labeled/circle_original_labeled.png" width="256"/></td>
-<td><img src="tests/augmented_outputs/labeled/circle_augmented_labeled.png" width="256"/></td>
-</tr>
-</table>
-
-### Squares
-
-<table>
-<tr>
-<td><b>Original</b></td>
-<td><b>Augmented</b></td>
-</tr>
-<tr>
-<td><img src="tests/augmented_outputs/labeled/square_original_labeled.png" width="256"/></td>
-<td><img src="tests/augmented_outputs/labeled/square_augmented_labeled.png" width="256"/></td>
-</tr>
-</table>
+### How It Works
 
 The augmentation successfully:
-- ✅ Extracts objects using mask-based detection (shown in red/green/blue overlays)
-- ✅ Applies random rotation (0-360°) with smooth bilinear interpolation
-- ✅ Pastes objects at random positions without collisions
-- ✅ Maintains clean edges and proper alpha blending
-- ✅ Preserves object class information throughout the pipeline
+- ✅ **Extracts objects** using mask-based detection (colored contours show detected objects)
+- ✅ **Applies random rotation** (0-360°) with smooth bilinear interpolation
+- ✅ **Pastes objects** at random positions without collisions
+- ✅ **Maintains clean edges** with proper alpha blending
+- ✅ **Preserves object classes** throughout the pipeline with class labels (TRIANGLE, CIRCLE, SQUARE)
 
 ## Installation
 
