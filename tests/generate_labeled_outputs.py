@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate labeled visualizations with segmentation masks and class names.
 
-This script creates side-by-side comparisons showing:
-1. Original images with mask overlay and class label
-2. Augmented images with mask overlay and class labels
+This script creates visualizations showing:
+1. Original images with segmentation contours and labels around each object
+2. Augmented images with segmentation contours and labels around each object
 """
 
 import json
@@ -15,90 +15,171 @@ import numpy as np
 from copy_paste import CopyPasteAugmentation
 
 
-def create_mask_overlay(
-    image: np.ndarray, mask: np.ndarray, alpha: float = 0.4
-) -> np.ndarray:
-    """Create an overlay of the mask on the image.
+def detect_objects_in_image(image: np.ndarray) -> list[dict[str, Any]]:
+    """Detect colored objects in an image and extract their contours.
 
     Args:
-        image: RGB image (H, W, 3)
-        mask: Grayscale mask (H, W) with class IDs
-        alpha: Transparency of overlay (0-1)
+        image: BGR image
 
     Returns:
-        Image with mask overlay
+        List of detected objects with contours, bboxes, colors, and class names
     """
-    overlay = image.copy()
-
-    # Create colored mask (use distinct colors per class)
-    color_map = {
-        1: (255, 0, 0),  # Triangle - Red
-        2: (0, 255, 0),  # Circle - Green
-        3: (0, 0, 255),  # Square - Blue
+    # Define color ranges for each shape
+    color_ranges = {
+        "triangle": {
+            "lower": np.array([0, 0, 200]),  # Red in BGR
+            "upper": np.array([50, 50, 255]),
+            "name": "triangle",
+        },
+        "circle": {
+            "lower": np.array([0, 200, 0]),  # Green in BGR
+            "upper": np.array([50, 255, 50]),
+            "name": "circle",
+        },
+        "square": {
+            "lower": np.array([200, 0, 0]),  # Blue in BGR
+            "upper": np.array([255, 50, 50]),
+            "name": "square",
+        },
     }
 
-    # Apply colors based on mask values
-    for class_id, color in color_map.items():
-        mask_region = mask == class_id
-        overlay[mask_region] = color
+    detected_objects = []
 
-    # Blend with original image
-    result = cv2.addWeighted(image, 1 - alpha, overlay, alpha, 0)
-    return result
+    for class_name, color_range in color_ranges.items():
+        # Create mask for this color
+        mask = cv2.inRange(image, color_range["lower"], color_range["upper"])
+
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in contours:
+            # Filter small contours (noise)
+            area = cv2.contourArea(contour)
+            if area < 100:  # Minimum area threshold
+                continue
+
+            # Get bounding box
+            x, y, w, h = cv2.boundingRect(contour)
+
+            detected_objects.append(
+                {
+                    "contour": contour,
+                    "bbox": (x, y, w, h),
+                    "class_name": class_name,
+                    "area": area,
+                }
+            )
+
+    return detected_objects
 
 
-def add_label(image: np.ndarray, class_name: str, position: str = "top") -> np.ndarray:
-    """Add class name label to image.
+def draw_segmentation_and_labels(
+    image: np.ndarray, objects: list[dict[str, Any]]
+) -> np.ndarray:
+    """Draw segmentation contours and labels on image.
 
     Args:
         image: Input image
-        class_name: Name of the class to display
-        position: 'top' or 'bottom'
+        objects: List of detected objects
 
     Returns:
-        Image with label added
+        Image with annotations
     """
-    img_copy = image.copy()
-    height, width = img_copy.shape[:2]
+    result = image.copy()
 
-    # Text properties
+    # Color mapping for labels
+    label_colors = {
+        "triangle": (255, 255, 255),  # White text
+        "circle": (255, 255, 255),
+        "square": (255, 255, 255),
+    }
+
+    contour_colors = {
+        "triangle": (0, 255, 255),  # Yellow contour
+        "circle": (255, 0, 255),  # Magenta contour
+        "square": (255, 255, 0),  # Cyan contour
+    }
+
+    for obj in objects:
+        contour = obj["contour"]
+        class_name = obj["class_name"]
+        x, y, w, h = obj["bbox"]
+
+        # Draw contour
+        cv2.drawContours(
+            result, [contour], -1, contour_colors[class_name], 2, cv2.LINE_AA
+        )
+
+        # Prepare label text
+        label = class_name.upper()
+
+        # Text properties
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 2
+
+        # Get text size
+        (text_width, text_height), baseline = cv2.getTextSize(
+            label, font, font_scale, thickness
+        )
+
+        # Position label above the bbox
+        label_x = x
+        label_y = max(y - 10, text_height + 5)
+
+        # Draw background rectangle for text
+        cv2.rectangle(
+            result,
+            (label_x, label_y - text_height - 5),
+            (label_x + text_width + 5, label_y + 5),
+            (0, 0, 0),
+            -1,
+        )
+
+        # Draw text
+        cv2.putText(
+            result,
+            label,
+            (label_x + 2, label_y),
+            font,
+            font_scale,
+            label_colors[class_name],
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    return result
+
+
+def add_title(image: np.ndarray, title: str) -> np.ndarray:
+    """Add title bar to top of image.
+
+    Args:
+        image: Input image
+        title: Title text
+
+    Returns:
+        Image with title bar
+    """
+    height, width = image.shape[:2]
+
+    # Create title bar
+    title_bar_height = 40
+    title_bar = np.zeros((title_bar_height, width, 3), dtype=np.uint8)
+
+    # Add text to title bar
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 1.0
+    font_scale = 0.8
     thickness = 2
-    color = (255, 255, 255)  # White text
-    bg_color = (0, 0, 0)  # Black background
+    color = (255, 255, 255)
 
-    # Get text size
-    (text_width, text_height), baseline = cv2.getTextSize(
-        class_name, font, font_scale, thickness
-    )
+    (text_width, text_height), _ = cv2.getTextSize(title, font, font_scale, thickness)
+    text_x = (width - text_width) // 2
+    text_y = (title_bar_height + text_height) // 2
 
-    # Calculate position
-    padding = 10
-    if position == "top":
-        text_x = padding
-        text_y = padding + text_height
-        rect_y1 = 0
-        rect_y2 = text_height + 2 * padding
-    else:  # bottom
-        text_x = padding
-        text_y = height - padding
-        rect_y1 = height - text_height - 2 * padding
-        rect_y2 = height
-
-    # Draw background rectangle
-    cv2.rectangle(
-        img_copy,
-        (0, rect_y1),
-        (text_width + 2 * padding, rect_y2),
-        bg_color,
-        -1,
-    )
-
-    # Draw text
     cv2.putText(
-        img_copy,
-        class_name,
+        title_bar,
+        title,
         (text_x, text_y),
         font,
         font_scale,
@@ -107,54 +188,9 @@ def add_label(image: np.ndarray, class_name: str, position: str = "top") -> np.n
         cv2.LINE_AA,
     )
 
-    return img_copy
-
-
-def extract_class_name_from_filename(filename: str) -> str:
-    """Extract class name from image filename.
-
-    Args:
-        filename: e.g., 'triangle_000.png'
-
-    Returns:
-        Class name, e.g., 'triangle'
-    """
-    return filename.split("_")[0]
-
-
-def get_mask_from_image(
-    coco_data: dict[str, Any], img_info: dict[str, Any], masks_dir: Path
-) -> tuple[np.ndarray | None, int]:
-    """Load mask for an image and extract class ID.
-
-    Args:
-        coco_data: COCO annotation data
-        img_info: Image information from COCO
-        masks_dir: Directory containing masks
-
-    Returns:
-        Tuple of (mask array, class_id)
-    """
-    # Load mask
-    mask_filename = img_info["file_name"].replace(".png", "_mask.png")
-    mask_path = masks_dir / mask_filename
-
-    if not mask_path.exists():
-        return None, 0
-
-    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        return None, 0
-
-    # Get class ID from annotation
-    img_id = img_info["id"]
-    annotations = [a for a in coco_data["annotations"] if a["image_id"] == img_id]
-
-    if not annotations:
-        return mask, 0
-
-    class_id = annotations[0]["category_id"]
-    return mask, class_id
+    # Stack title bar on top of image
+    result = np.vstack([title_bar, image])
+    return result
 
 
 def main() -> bool:
@@ -204,7 +240,7 @@ def main() -> bool:
     # Process one example per class
     examples_per_class = {}
     for img_info in coco_data["images"]:
-        class_name = extract_class_name_from_filename(img_info["file_name"])
+        class_name = img_info["file_name"].split("_")[0]
         if class_name not in examples_per_class:
             examples_per_class[class_name] = img_info["file_name"]
 
@@ -229,14 +265,26 @@ def main() -> bool:
             continue
 
         # Load mask
-        mask, class_id = get_mask_from_image(coco_data, img_info, masks_dir)
-        if mask is None:
+        mask_filename = img_info["file_name"].replace(".png", "_mask.png")
+        mask_path = masks_dir / mask_filename
+        if not mask_path.exists():
             print("    ⚠️  Mask not found")
             continue
 
-        # Create original with label and mask overlay
-        original_with_mask = create_mask_overlay(original_img, mask)
-        original_labeled = add_label(original_with_mask, class_name.upper(), "top")
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            print("    ❌ Failed to load mask")
+            continue
+
+        # Detect objects in original image
+        original_objects = detect_objects_in_image(original_img)
+        print(f"    Detected {len(original_objects)} object(s) in original")
+
+        # Draw segmentation and labels on original
+        original_annotated = draw_segmentation_and_labels(
+            original_img, original_objects
+        )
+        original_with_title = add_title(original_annotated, "Original")
 
         # Apply augmentation
         try:
@@ -245,23 +293,28 @@ def main() -> bool:
                 print("    ⚠️  Transform returned None")
                 continue
 
-            # For augmented, we don't have the output mask, so just add label
-            augmented_labeled = add_label(
-                augmented_img, f"{class_name.upper()} (Augmented)", "top"
+            # Detect objects in augmented image
+            augmented_objects = detect_objects_in_image(augmented_img)
+            print(f"    Detected {len(augmented_objects)} object(s) in augmented")
+
+            # Draw segmentation and labels on augmented
+            augmented_annotated = draw_segmentation_and_labels(
+                augmented_img, augmented_objects
             )
+            augmented_with_title = add_title(augmented_annotated, "Augmented")
 
             # Save individual labeled images
             cv2.imwrite(
                 str(labeled_dir / f"{class_name}_original_labeled.png"),
-                original_labeled,
+                original_with_title,
             )
             cv2.imwrite(
                 str(labeled_dir / f"{class_name}_augmented_labeled.png"),
-                augmented_labeled,
+                augmented_with_title,
             )
 
             # Create side-by-side comparison
-            comparison = np.hstack([original_labeled, augmented_labeled])
+            comparison = np.hstack([original_with_title, augmented_with_title])
             cv2.imwrite(
                 str(labeled_dir / f"{class_name}_comparison.png"),
                 comparison,
@@ -271,6 +324,9 @@ def main() -> bool:
 
         except Exception as e:
             print(f"    ❌ Error during augmentation: {e}")
+            import traceback
+
+            traceback.print_exc()
             continue
 
     print(f"\n✨ Generated labeled visualizations in {labeled_dir}")
