@@ -17,9 +17,7 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 ## Visual Examples
 
-See the copy-paste augmentation in action with our test dataset. Each example shows the original image alongside the augmented result with objects copied, rotated, and pasted at new positions:
-
-### Individual Shapes
+See the copy-paste augmentation in action with our test dataset. Each example demonstrates the algorithm extracting objects from a source mask, applying random transformations (rotation, scaling), and pasting them at new positions:
 
 <table>
 <tr>
@@ -32,40 +30,24 @@ See the copy-paste augmentation in action with our test dataset. Each example sh
 <td><img src="tests/augmented_outputs/labeled/circle_comparison.png" width="340"/></td>
 <td><img src="tests/augmented_outputs/labeled/square_comparison.png" width="340"/></td>
 </tr>
-</table>
-
-### Mixed Shapes
-
-The augmentation works with composite source images containing multiple different object types:
-
-<table>
 <tr>
-<td align="center"><b>All Shapes Combined</b></td>
-</tr>
-<tr>
-<td><img src="tests/augmented_outputs/labeled/mixed_mixed_all_comparison.png" width="1024"/></td>
+<td colspan="3" align="center">
+<i>Original images (left) contain single objects. Augmented images (right) show the same objects<br/>
+copied and pasted with random rotation (0-360°), scaling (0.8-1.3x), and positioning.</i>
+</td>
 </tr>
 </table>
 
-<table>
-<tr>
-<td align="center"><b>Triangles + Circles</b></td>
-<td align="center"><b>Circles + Squares</b></td>
-</tr>
-<tr>
-<td><img src="tests/augmented_outputs/labeled/mixed_triangles_circles_comparison.png" width="512"/></td>
-<td><img src="tests/augmented_outputs/labeled/mixed_circles_squares_comparison.png" width="512"/></td>
-</tr>
-</table>
-
-### How It Works
+### Key Features Demonstrated
 
 The augmentation successfully:
-- ✅ **Extracts objects** using mask-based detection (colored contours show detected objects)
-- ✅ **Applies random rotation** (0-360°) with smooth bilinear interpolation
-- ✅ **Pastes objects** at random positions without collisions
+- ✅ **Extracts objects** from segmentation masks (colored contours show detected objects)
+- ✅ **Applies random rotation** (0-360°) with smooth bilinear interpolation (see rotated square)
+- ✅ **Creates multiple instances** from single source objects (see 2 triangles, 2 circles)
+- ✅ **Random positioning** with collision detection to prevent overlaps
+- ✅ **Scales objects** randomly within specified range (0.8-1.3x by default)
 - ✅ **Maintains clean edges** with proper alpha blending
-- ✅ **Preserves object classes** throughout the pipeline with class labels (TRIANGLE, CIRCLE, SQUARE)
+- ✅ **Preserves class labels** throughout the pipeline (TRIANGLE, CIRCLE, SQUARE markers)
 
 ## Installation
 
