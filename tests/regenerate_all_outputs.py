@@ -72,19 +72,17 @@ def draw_segmentation_and_labels(
         "square": (255, 255, 255),
     }
 
-    contour_colors = {
-        "triangle": (0, 255, 255),  # Yellow
-        "circle": (255, 0, 255),  # Magenta
-        "square": (255, 255, 0),  # Cyan
-    }
+    # Draw all segmentations in yellow to verify mask boundaries
+    segmentation_color = (0, 255, 255)  # Yellow in BGR
 
     for obj in objects:
         contour = obj["contour"]
         class_name = obj["class_name"]
         x, y, w, h = obj["bbox"]
 
+        # Draw yellow segmentation contour for all objects
         cv2.drawContours(
-            result, [contour], -1, contour_colors[class_name], 2, cv2.LINE_AA
+            result, [contour], -1, segmentation_color, 2, cv2.LINE_AA
         )
 
         label = class_name.upper()
