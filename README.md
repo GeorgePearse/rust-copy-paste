@@ -15,6 +15,55 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 - Support multiple blending modes (normal, x-ray)
 - Work seamlessly with Albumentations
 
+## Visual Examples
+
+See the copy-paste augmentation in action with our test dataset:
+
+### Triangles
+
+<table>
+<tr>
+<td><b>Original</b></td>
+<td><b>Augmented</b></td>
+</tr>
+<tr>
+<td><img src="tests/dummy_dataset/images/triangle_000.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/augmented_000.png" width="256"/></td>
+</tr>
+</table>
+
+### Circles
+
+<table>
+<tr>
+<td><b>Original</b></td>
+<td><b>Augmented</b></td>
+</tr>
+<tr>
+<td><img src="tests/dummy_dataset/images/circle_000.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/augmented_003.png" width="256"/></td>
+</tr>
+</table>
+
+### Squares
+
+<table>
+<tr>
+<td><b>Original</b></td>
+<td><b>Augmented</b></td>
+</tr>
+<tr>
+<td><img src="tests/dummy_dataset/images/square_000.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/augmented_006.png" width="256"/></td>
+</tr>
+</table>
+
+The augmentation successfully:
+- ✅ Extracts objects using mask-based detection
+- ✅ Applies random rotation (0-360°) with smooth bilinear interpolation
+- ✅ Pastes objects at random positions without collisions
+- ✅ Maintains clean edges and proper alpha blending
+
 ## Installation
 
 ```bash
