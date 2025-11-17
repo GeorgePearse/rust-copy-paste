@@ -42,25 +42,67 @@ def collect_rotation_metadata(transform: SimpleCopyPaste) -> list[dict[str, Any]
     return metadata
 
 
+def create_mixed_source(
+    all_images: list[np.ndarray],
+    all_masks: list[np.ndarray],
+    num_shapes: int = 3,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Create a composite source image with multiple random shapes for mixing."""
+    # Start with white canvas
+    h, w = all_images[0].shape[:2]
+    composite_img = np.full((h, w, 3), 255, dtype=np.uint8)
+    composite_mask = np.zeros((h, w), dtype=np.uint8)
+
+    # Randomly select shapes to include
+    selected_indices = np.random.choice(len(all_images), size=num_shapes, replace=True)
+
+    for idx in selected_indices:
+        src_img = all_images[idx]
+        src_mask = all_masks[idx]
+
+        # Find object region in source
+        object_pixels = src_mask > 0
+
+        # Copy object to composite (without rotation/scaling - that happens later)
+        if object_pixels.any():
+            composite_img[object_pixels] = src_img[object_pixels]
+            composite_mask[object_pixels] = src_mask[object_pixels]
+
+    return composite_img, composite_mask
+
+
 def run_pipeline_variant(
     transform: SimpleCopyPaste,
-    original_img: np.ndarray,
-    mask: np.ndarray,
+    base_img: np.ndarray,
+    all_images: list[np.ndarray],
+    all_masks: list[np.ndarray],
 ) -> tuple[np.ndarray, int, list[dict[str, Any]]]:
-    """Run the Simple Copy-Paste pipeline until it applies a random transform."""
+    """Run the Simple Copy-Paste pipeline with mixed shapes from random sources."""
 
-    last_image = original_img.copy()
+    last_image = base_img.copy()
     last_changed = 0
     last_metadata: list[dict[str, Any]] = []
 
     for attempt in range(1, MAX_ATTEMPTS_PER_VARIANT + 1):
-        augmented_image = transform.apply(original_img.copy(), mask=mask)
+        # Create a composite source with 2-3 random shapes
+        num_shapes = np.random.randint(2, 4)
+        composite_img, composite_mask = create_mixed_source(
+            all_images, all_masks, num_shapes
+        )
+
+        # Apply transform to the composite
+        augmented_image = transform.apply(
+            composite_img,
+            mask=composite_mask[:, :, np.newaxis],  # Add channel dimension
+        )
 
         if augmented_image is None:
             print("    ⚠️  Transform returned None; aborting attempt")
             break
 
-        changed_pixels = int(np.count_nonzero(augmented_image != original_img))
+        # Compare against white background
+        canvas = np.full_like(base_img, 255, dtype=np.uint8)
+        changed_pixels = int(np.count_nonzero(augmented_image != canvas))
         rotation_metadata = collect_rotation_metadata(transform)
 
         if changed_pixels > 0 and rotation_metadata:
@@ -73,7 +115,7 @@ def run_pipeline_variant(
         last_changed = changed_pixels
         last_metadata = rotation_metadata
 
-    # If we reach here, fall back to last attempt even if it had no placements
+    # If we reach here, fall back to last attempt
     return last_image, last_changed, last_metadata
 
 
@@ -125,27 +167,23 @@ def main():
         print("🐍 Skipping augmentation generation")
         return True  # Skip this step gracefully
 
-    # Process all images (9 total: 3 triangles, 3 circles, 3 squares)
-    results = []
-    num_to_process = len(coco_data["images"])
+    # First, load all images and masks
+    print("\n📦 Loading all images and masks for mixing...")
+    all_images = []
+    all_masks = []
+    image_info_list = []
 
-    for img_idx, img_info in enumerate(coco_data["images"][:num_to_process]):
-        print(
-            f"\n📸 Processing image {img_idx + 1}/{num_to_process}: {img_info['file_name']}"
-        )
-
+    for img_info in coco_data["images"]:
         # Load image
         image_path = images_dir / img_info["file_name"]
         if not image_path.exists():
             print(f"  ⚠️  Image not found: {image_path}")
             continue
 
-        original_img = cv2.imread(str(image_path))
-        if original_img is None:
-            print("  ❌ Failed to load image")
+        img = cv2.imread(str(image_path))
+        if img is None:
+            print(f"  ❌ Failed to load image: {img_info['file_name']}")
             continue
-
-        height, width = original_img.shape[:2]
 
         # Load corresponding mask
         mask_filename = img_info["file_name"].replace(".png", "_mask.png")
@@ -157,14 +195,35 @@ def main():
 
         mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
         if mask is None:
-            print("  ❌ Failed to load mask")
+            print(f"  ❌ Failed to load mask: {mask_filename}")
             continue
 
-        # Apply transform to image using the .apply() method with mask
+        all_images.append(img)
+        all_masks.append(mask)
+        image_info_list.append(img_info)
+
+    print(f"✅ Loaded {len(all_images)} images and masks")
+
+    if len(all_images) == 0:
+        print("❌ No images loaded, cannot proceed")
+        return False
+
+    # Process all images, using random shapes/colors from the pool
+    results = []
+    num_to_process = len(image_info_list)
+
+    for img_idx, (base_img, img_info) in enumerate(zip(all_images, image_info_list)):
+        print(
+            f"\n📸 Processing image {img_idx + 1}/{num_to_process}: {img_info['file_name']}"
+        )
+
+        height, width = base_img.shape[:2]
+
+        # Apply transform with random mixing
         for variant_idx in range(VARIANTS_PER_IMAGE):
             try:
                 augmented_img, changed_pixels, rotation_metadata = run_pipeline_variant(
-                    transform, original_img, mask
+                    transform, base_img, all_images, all_masks
                 )
 
                 if augmented_img is None:
