@@ -612,7 +612,7 @@ pub fn place_objects(
         let final_y_min =
             (raw_bbox.1 + y_start as f32 + tight_y_min as f32).clamp(0.0, image_height_f);
         let final_x_max = (final_x_min + tight_width).min(image_width_f);
-        let final_y_max = (final_y_min + tight_height).min(image_width_f);
+        let final_y_max = (final_y_min + tight_height).min(image_height_f);
 
         if final_x_max - final_x_min <= 0.0 || final_y_max - final_y_min <= 0.0 {
             continue;
