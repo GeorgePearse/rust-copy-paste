@@ -62,6 +62,21 @@ def sample_masks():
     ]
 
 
+def _build_toy_sample(size: int = 64) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Create a deterministic image/mask pair with two labelled objects."""
+    image = np.zeros((size, size, 3), dtype=np.uint8)
+    mask = np.zeros((size, size), dtype=np.uint8)
+    target_mask = np.zeros((size, size), dtype=np.uint8)
+
+    image[4:12, 4:12, 2] = 255  # class 1 (red)
+    mask[4:12, 4:12] = 1
+
+    image[20:28, 20:28, 1] = 200  # class 2 (green)
+    mask[20:28, 20:28] = 2
+
+    return image, mask, target_mask
+
+
 def test_transform_initialization(sample_transform):
     """Test that transform initializes correctly."""
     assert sample_transform.image_width == 512
@@ -287,3 +302,54 @@ def test_empty_masks(sample_transform):
     empty_masks = []
     result = sample_transform.apply_to_masks(empty_masks)
     assert result == []
+
+
+def test_end_to_end_mask_and_bbox_outputs():
+    """Verify Albumentations wrapper mirrors the Rust metadata."""
+    image, mask, target_mask = _build_toy_sample()
+
+    transform = CopyPasteAugmentation(
+        image_width=image.shape[1],
+        image_height=image.shape[0],
+        max_paste_objects=2,
+        use_rotation=False,
+        use_scaling=False,
+        p=1.0,
+    )
+
+    augmented = transform.apply(
+        image.copy(),
+        mask=mask,
+        target_mask=target_mask,
+    )
+    assert augmented.shape == image.shape
+    assert augmented.dtype == np.uint8
+
+    bbox_metadata = transform.apply_to_bboxes(np.empty((0, 5), dtype=np.float32))
+    assert bbox_metadata.shape == (2, 6)
+    assert np.all(bbox_metadata[:, :4] >= 0.0) and np.all(bbox_metadata[:, :4] <= 1.0)
+    assert np.all(bbox_metadata[:, 0] < bbox_metadata[:, 2])
+    assert np.all(bbox_metadata[:, 1] < bbox_metadata[:, 3])
+    assert set(np.round(bbox_metadata[:, 4]).astype(int)) == {1, 2}
+    assert np.allclose(bbox_metadata[:, 5], 0.0, atol=1e-3)
+
+    # Collision detection should keep pasted boxes apart.
+    def _iou(box_a: np.ndarray, box_b: np.ndarray) -> float:
+        x_min = max(box_a[0], box_b[0])
+        y_min = max(box_a[1], box_b[1])
+        x_max = min(box_a[2], box_b[2])
+        y_max = min(box_a[3], box_b[3])
+        if x_max <= x_min or y_max <= y_min:
+            return 0.0
+        intersect = (x_max - x_min) * (y_max - y_min)
+        area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+        area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+        return intersect / (area_a + area_b - intersect)
+
+    assert _iou(bbox_metadata[0, :4], bbox_metadata[1, :4]) < 0.01
+
+    recovered_mask = transform.apply_to_mask(np.zeros_like(mask))
+    assert recovered_mask.shape == mask.shape
+    unique_values = set(np.unique(recovered_mask))
+    assert {0, 1, 2}.issubset(unique_values)
+    assert int(np.sum(recovered_mask > 0)) > 0
