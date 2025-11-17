@@ -88,6 +88,7 @@ class CopyPasteAugmentation(A.DualTransform):
         self.blend_mode = blend_mode
         self.object_counts = object_counts or {}
         self._last_mask_output: Optional[np.ndarray] = None
+        self._cached_source_mask: Optional[np.ndarray] = None
 
         # Initialize Rust transform
         self.rust_transform = CopyPasteTransform(
@@ -110,6 +111,28 @@ class CopyPasteAugmentation(A.DualTransform):
             f"rotation={use_rotation}, scaling={use_scaling}"
         )
 
+    def __call__(self, force: bool = False, **kwargs: Any) -> dict[str, Any]:
+        """Override Albumentations __call__ to handle image+mask together.
+
+        Copy-paste augmentation needs both image and mask simultaneously to
+        extract objects, but Albumentations DualTransform calls apply() and
+        apply_to_mask() separately. This override processes them together.
+        """
+        if "image" not in kwargs:
+            raise ValueError("image is required")
+
+        # Cache the mask for use in apply()
+        if "mask" in kwargs:
+            self._cached_source_mask = kwargs["mask"]
+
+        # Call parent __call__ which will invoke apply() and apply_to_mask()
+        result = super().__call__(force=force, **kwargs)
+
+        # Clear cache
+        self._cached_source_mask = None
+
+        return result
+
     def apply(
         self,
         img: np.ndarray,
@@ -123,6 +146,7 @@ class CopyPasteAugmentation(A.DualTransform):
         Returns:
             Augmented image
         """
+        logger.debug(f"apply() called with image shape {img.shape}, params keys: {list(params.keys())}")
         # Convert to uint8 if needed
         if img.dtype != np.uint8:
             img = (
@@ -136,11 +160,12 @@ class CopyPasteAugmentation(A.DualTransform):
             raise ValueError(f"Expected BGR image (H, W, 3), got shape {img.shape}")
 
         # Call Rust implementation
-        # Note: The Rust apply() method currently returns data unchanged
-        # Full implementation would perform the copy-paste operations
         try:
+            # Use cached mask (set in __call__) or fallback to params
             source_mask = self._prepare_mask(
-                params.get("mask"), img.shape[0], img.shape[1]
+                self._cached_source_mask if self._cached_source_mask is not None else params.get("mask"),
+                img.shape[0],
+                img.shape[1]
             )
             target_mask = self._prepare_mask(
                 params.get("target_mask"), img.shape[0], img.shape[1]

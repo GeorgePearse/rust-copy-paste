@@ -218,8 +218,9 @@ def main() -> bool:
         original_with_title = add_title(original_annotated, "Original")
 
         # Apply augmentation
-        augmented_img = transform.apply(original_img.copy(), mask=mask)
-        augmented_mask = transform.apply_to_mask(mask.copy())
+        result = transform(image=original_img.copy(), mask=mask)
+        augmented_img = result["image"]
+        augmented_mask = result.get("mask")
 
         if augmented_img is None:
             print("    ⚠️  Transform returned None")
