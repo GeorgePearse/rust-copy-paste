@@ -17,37 +17,54 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 ## Visual Examples
 
-See the copy-paste augmentation in action with our test dataset. Each example demonstrates the algorithm extracting objects from a source mask, applying random transformations (rotation, scaling), and pasting them at new positions:
+See the copy-paste augmentation in action with our test dataset. The algorithm extracts objects from different source images, applies random transformations (rotation ±180°, scaling 0.85-1.25x), and combines them into synthetic composite images:
 
 <table>
 <tr>
-<td align="center"><b>Triangles</b></td>
-<td align="center"><b>Circles</b></td>
-<td align="center"><b>Squares</b></td>
+<td align="center"><b>Mixed Shapes Example 1</b></td>
+<td align="center"><b>Mixed Shapes Example 2</b></td>
+<td align="center"><b>Mixed Shapes Example 3</b></td>
 </tr>
 <tr>
-<td><img src="tests/augmented_outputs/labeled/triangle_comparison.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/labeled/circle_comparison.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/labeled/square_comparison.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_000_v0.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_000_v1.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_003_v2.png" width="340"/></td>
 </tr>
 <tr>
-<td colspan="3" align="center">
-<i>Original images (left) contain single objects. Augmented images (right) show the same objects<br/>
-copied and pasted with random rotation (0-360°), scaling (0.8-1.3x), and positioning.</i>
-</td>
+<td align="center"><i>Blue square + green circles</i></td>
+<td align="center"><i>Red triangle + green circle</i></td>
+<td align="center"><i>Green circle + red triangles</i></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td align="center"><b>Complex Composition 1</b></td>
+<td align="center"><b>Complex Composition 2</b></td>
+<td align="center"><b>Complex Composition 3</b></td>
+</tr>
+<tr>
+<td><img src="tests/augmented_outputs/augmented_008_v2.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_006_v1.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_007_v1.png" width="340"/></td>
+</tr>
+<tr>
+<td align="center"><i>All three shapes with rotation</i></td>
+<td align="center"><i>Rotated blue squares</i></td>
+<td align="center"><i>Mixed red triangle + green circle</i></td>
 </tr>
 </table>
 
 ### Key Features Demonstrated
 
 The augmentation successfully:
-- ✅ **Extracts objects** from segmentation masks (colored contours show detected objects)
-- ✅ **Applies random rotation** (0-360°) with smooth bilinear interpolation (see rotated square)
-- ✅ **Creates multiple instances** from single source objects (see 2 triangles, 2 circles)
+- ✅ **Mixes objects from different sources** - combines triangles, circles, and squares from separate images
+- ✅ **Applies random rotation** (±180°) with smooth bilinear interpolation
+- ✅ **Random scaling** (0.85-1.25x) to create size variation
 - ✅ **Random positioning** with collision detection to prevent overlaps
-- ✅ **Scales objects** randomly within specified range (0.8-1.3x by default)
+- ✅ **Combines multiple colors** - red, green, and blue objects in the same scene
 - ✅ **Maintains clean edges** with proper alpha blending
-- ✅ **Preserves class labels** throughout the pipeline (TRIANGLE, CIRCLE, SQUARE markers)
+- ✅ **Creates realistic synthetic data** for training object detection models
 
 ## Installation
 
