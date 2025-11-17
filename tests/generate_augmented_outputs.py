@@ -47,13 +47,15 @@ def run_pipeline_variant(
     base_img: np.ndarray,
     all_images: list[np.ndarray],
     all_masks: list[np.ndarray],
-) -> tuple[np.ndarray, int, list[dict[str, Any]]]:
+    source_info_list: list[dict[str, Any]],
+) -> tuple[np.ndarray, np.ndarray, int, list[dict[str, Any]]]:
     """Run the Simple Copy-Paste pipeline with individually transformed objects from random sources."""
 
     # Start with white canvas
     h, w = base_img.shape[:2]
     canvas = np.full((h, w, 3), 255, dtype=np.uint8)
     working_image = canvas.copy()
+    output_mask = np.zeros((h, w), dtype=np.uint8)
     all_metadata: list[dict[str, Any]] = []
 
     # Randomly select 2-3 different source objects to paste
@@ -64,6 +66,7 @@ def run_pipeline_variant(
         source_idx = np.random.randint(0, len(all_images))
         source_img = all_images[source_idx]
         source_mask = all_masks[source_idx]
+        source_info = source_info_list[source_idx]
 
         # Apply transform to this single object (with random rotation/scale/position)
         augmented = transform.apply(
@@ -77,6 +80,10 @@ def run_pipeline_variant(
         # Get metadata for this object
         metadata = collect_rotation_metadata(transform)
         if metadata:
+            # Add source information to metadata
+            for meta in metadata:
+                meta["source_image"] = source_info["file_name"]
+                meta["class_name"] = source_info["class_name"]
             all_metadata.extend(metadata)
 
         # Composite the augmented object onto our working canvas
@@ -86,14 +93,17 @@ def run_pipeline_variant(
         # Paste onto working image
         working_image[mask_fg] = augmented[mask_fg]
 
+        # Update output mask with class label (using class_id from source_info)
+        output_mask[mask_fg] = source_info["class_id"]
+
     # Check if we actually pasted anything
     changed_pixels = int(np.count_nonzero(working_image != canvas))
 
     if changed_pixels > 0 and all_metadata:
-        return working_image, changed_pixels, all_metadata
+        return working_image, output_mask, changed_pixels, all_metadata
 
     # If we didn't get any objects, return empty result
-    return canvas, 0, []
+    return canvas, output_mask, 0, []
 
 
 def main():
@@ -144,11 +154,15 @@ def main():
         print("🐍 Skipping augmentation generation")
         return True  # Skip this step gracefully
 
+    # Create category mapping
+    category_map = {cat["id"]: cat["name"] for cat in coco_data["categories"]}
+
     # First, load all images and masks
     print("\n📦 Loading all images and masks for mixing...")
     all_images = []
     all_masks = []
     image_info_list = []
+    source_info_list = []
 
     for img_info in coco_data["images"]:
         # Load image
@@ -175,9 +189,30 @@ def main():
             print(f"  ❌ Failed to load mask: {mask_filename}")
             continue
 
+        # Find the class name from the filename (e.g., "triangle_000.png" -> "triangle")
+        class_name = img_info["file_name"].split("_")[0]
+
+        # Find the matching category ID
+        class_id = None
+        for cat_id, cat_name in category_map.items():
+            if cat_name == class_name:
+                class_id = cat_id
+                break
+
+        if class_id is None:
+            print(f"  ⚠️  Could not determine class for {img_info['file_name']}")
+            continue
+
         all_images.append(img)
         all_masks.append(mask)
         image_info_list.append(img_info)
+        source_info_list.append(
+            {
+                "file_name": img_info["file_name"],
+                "class_name": class_name,
+                "class_id": class_id,
+            }
+        )
 
     print(f"✅ Loaded {len(all_images)} images and masks")
 
@@ -199,8 +234,13 @@ def main():
         # Apply transform with random mixing
         for variant_idx in range(VARIANTS_PER_IMAGE):
             try:
-                augmented_img, changed_pixels, rotation_metadata = run_pipeline_variant(
-                    transform, base_img, all_images, all_masks
+                (
+                    augmented_img,
+                    output_mask,
+                    changed_pixels,
+                    rotation_metadata,
+                ) = run_pipeline_variant(
+                    transform, base_img, all_images, all_masks, source_info_list
                 )
 
                 if augmented_img is None:
@@ -211,27 +251,36 @@ def main():
                 output_path = output_dir / output_filename
                 cv2.imwrite(str(output_path), augmented_img)
 
+                # Save the mask
+                mask_filename = f"augmented_{img_idx:03d}_v{variant_idx}_mask.png"
+                mask_path = output_dir / mask_filename
+                cv2.imwrite(str(mask_path), output_mask)
+
                 if changed_pixels == 0 or not rotation_metadata:
                     print(
                         "  ⚠️  Saved output but pipeline produced no detectable rotations"
                     )
                 else:
+                    class_names = ", ".join(
+                        meta["class_name"] for meta in rotation_metadata
+                    )
                     rotations = ", ".join(
                         f"{meta['rotation_deg']:.1f}°" for meta in rotation_metadata
                     )
                     print(
-                        f"  🎲 Variant {variant_idx + 1}: {len(rotation_metadata)} objects | rotations: {rotations}"
+                        f"  🎲 Variant {variant_idx + 1}: {len(rotation_metadata)} objects ({class_names}) | rotations: {rotations}"
                     )
 
                 results.append(
                     {
                         "original": img_info["file_name"],
                         "augmented": output_filename,
+                        "mask": mask_filename,
                         "variant": variant_idx,
                         "width": width,
                         "height": height,
                         "changed_pixels": changed_pixels,
-                        "rotations": rotation_metadata,
+                        "objects": rotation_metadata,
                     }
                 )
 
