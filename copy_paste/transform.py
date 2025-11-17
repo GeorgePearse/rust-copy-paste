@@ -8,6 +8,7 @@ from loguru import logger
 
 try:
     from copy_paste._core import CopyPasteTransform  # type: ignore[import-untyped]
+
     RUST_AVAILABLE = True
 except ImportError:
     logger.warning("copy_paste Rust module not available. Build with: maturin develop")
@@ -124,7 +125,11 @@ class CopyPasteAugmentation(A.DualTransform):
         """
         # Convert to uint8 if needed
         if img.dtype != np.uint8:
-            img = (img * 255).astype(np.uint8) if img.max() <= 1.0 else img.astype(np.uint8)
+            img = (
+                (img * 255).astype(np.uint8)
+                if img.max() <= 1.0
+                else img.astype(np.uint8)
+            )
 
         # Ensure image is BGR
         if img.ndim != 3 or img.shape[2] != 3:
@@ -134,8 +139,12 @@ class CopyPasteAugmentation(A.DualTransform):
         # Note: The Rust apply() method currently returns data unchanged
         # Full implementation would perform the copy-paste operations
         try:
-            source_mask = self._prepare_mask(params.get("mask"), img.shape[0], img.shape[1])
-            target_mask = self._prepare_mask(params.get("target_mask"), img.shape[0], img.shape[1])
+            source_mask = self._prepare_mask(
+                params.get("mask"), img.shape[0], img.shape[1]
+            )
+            target_mask = self._prepare_mask(
+                params.get("target_mask"), img.shape[0], img.shape[1]
+            )
 
             augmented_image, augmented_mask = self.rust_transform.apply(
                 np.ascontiguousarray(img),
@@ -241,7 +250,9 @@ class CopyPasteAugmentation(A.DualTransform):
 
             return result
         except Exception as e:
-            logger.warning(f"Bbox transformation failed: {e}, returning original bboxes")
+            logger.warning(
+                f"Bbox transformation failed: {e}, returning original bboxes"
+            )
             return np.empty((0, 6), dtype=np.float32)
 
     @staticmethod
@@ -252,7 +263,9 @@ class CopyPasteAugmentation(A.DualTransform):
             return (array * 255).astype(np.uint8)
         return array.astype(np.uint8)
 
-    def _prepare_mask(self, mask: Optional[np.ndarray], height: int, width: int) -> np.ndarray:
+    def _prepare_mask(
+        self, mask: Optional[np.ndarray], height: int, width: int
+    ) -> np.ndarray:
         if mask is None:
             return np.zeros((height, width, 1), dtype=np.uint8)
 
@@ -289,7 +302,9 @@ class CopyPasteAugmentation(A.DualTransform):
         return None
 
     @staticmethod
-    def _resize_mask_if_needed(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
+    def _resize_mask_if_needed(
+        mask: np.ndarray, target_shape: tuple[int, int]
+    ) -> np.ndarray:
         if mask.shape == target_shape:
             return mask
 

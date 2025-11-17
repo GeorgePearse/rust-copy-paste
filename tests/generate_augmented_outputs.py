@@ -8,12 +8,10 @@ This script tests the copy_paste transform by:
 """
 
 import json
-import os
 from pathlib import Path
 
 import cv2
-import numpy as np
-from copy_paste import CopyPasteAugmentation, SimpleCopyPaste
+from copy_paste import CopyPasteAugmentation
 
 
 def main():
@@ -38,7 +36,9 @@ def main():
     with open(annotations_file) as f:
         coco_data = json.load(f)
 
-    print(f"📋 Loaded {len(coco_data['images'])} images and {len(coco_data['annotations'])} annotations")
+    print(
+        f"📋 Loaded {len(coco_data['images'])} images and {len(coco_data['annotations'])} annotations"
+    )
 
     # Extract class names
     class_list = [cat["name"] for cat in coco_data["categories"]]
@@ -60,12 +60,14 @@ def main():
         print("🐍 Skipping augmentation generation")
         return True  # Skip this step gracefully
 
-    # Process up to 5 images
+    # Process all images (9 total: 3 triangles, 3 circles, 3 squares)
     results = []
-    num_to_process = min(5, len(coco_data["images"]))
+    num_to_process = len(coco_data["images"])
 
     for img_idx, img_info in enumerate(coco_data["images"][:num_to_process]):
-        print(f"\n📸 Processing image {img_idx + 1}/{num_to_process}: {img_info['file_name']}")
+        print(
+            f"\n📸 Processing image {img_idx + 1}/{num_to_process}: {img_info['file_name']}"
+        )
 
         # Load image
         image_path = images_dir / img_info["file_name"]
@@ -75,17 +77,30 @@ def main():
 
         original_img = cv2.imread(str(image_path))
         if original_img is None:
-            print(f"  ❌ Failed to load image")
+            print("  ❌ Failed to load image")
             continue
 
         height, width = original_img.shape[:2]
 
-        # Apply transform to image using the .apply() method
+        # Load corresponding mask
+        mask_filename = img_info["file_name"].replace(".png", "_mask.png")
+        mask_path = dataset_dir / "masks" / mask_filename
+
+        if not mask_path.exists():
+            print(f"  ⚠️  Mask not found: {mask_path}")
+            continue
+
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            print("  ❌ Failed to load mask")
+            continue
+
+        # Apply transform to image using the .apply() method with mask
         try:
-            augmented_img = transform.apply(original_img.copy())
+            augmented_img = transform.apply(original_img.copy(), mask=mask)
 
             if augmented_img is None:
-                print(f"  ⚠️  Transform returned None")
+                print("  ⚠️  Transform returned None")
                 continue
 
             # Save augmented image
@@ -93,14 +108,16 @@ def main():
             output_path = output_dir / output_filename
             cv2.imwrite(str(output_path), augmented_img)
 
-            print(f"  ✅ Augmented image saved")
+            print("  ✅ Augmented image saved")
 
-            results.append({
-                "original": img_info["file_name"],
-                "augmented": output_filename,
-                "width": width,
-                "height": height,
-            })
+            results.append(
+                {
+                    "original": img_info["file_name"],
+                    "augmented": output_filename,
+                    "width": width,
+                    "height": height,
+                }
+            )
 
         except Exception as e:
             print(f"  ❌ Error during augmentation: {e}")

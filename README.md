@@ -121,6 +121,21 @@ aug = A.Compose([
 augmented = aug(image=image, mask=mask, bboxes=bboxes)
 ```
 
+## Testing & Quality Tooling
+
+Install the recommended helper binaries once:
+
+```bash
+cargo install cargo-nextest cargo-insta cargo-tarpaulin
+```
+
+- `cargo nextest run` – parallel, flaky-aware test runner for the Rust suite.
+- `cargo insta test` / `cargo insta review` – manage YAML snapshots stored under `tests/snapshots/`.
+- `cargo tarpaulin --out Html` – collect local coverage reports (works on stable).
+
+The codebase now includes rstest parameterized cases, proptest properties, and insta snapshots to validate the copy-paste pipeline end-to-end.
+
+
 ### Advanced Configuration
 
 ```python

@@ -160,7 +160,8 @@ fn extract_object_patch(
                     patch_image[[y, x, c]] = image[[src_y, src_x, c]];
 
                     let mask_channel = if c < mask_channels { c } else { 0 };
-                    patch_mask[[y, x, c]] = mask[[src_y, src_x, mask_channel]];
+                    let mask_value = mask[[src_y, src_x, mask_channel]];
+                    patch_mask[[y, x, c]] = if mask_value > 0 { 255 } else { 0 };
                 }
             }
         }
@@ -750,6 +751,9 @@ pub fn update_output_mask(output_mask: &mut Array3<u8>, placed_objects: &[Placed
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_yaml_snapshot;
+    use proptest::prelude::*;
+    use rstest::rstest;
 
     #[test]
     fn test_extract_objects_from_mask() {
@@ -767,6 +771,33 @@ mod tests {
         let objects = extract_objects_from_mask(image.view(), mask.view());
         assert!(!objects.is_empty());
         assert_eq!(objects[0].class_id, 1);
+    }
+
+    #[test]
+    fn test_extract_objects_produces_binary_masks_for_blending() {
+        let image = Array3::zeros((8, 8, 3));
+        let mut mask = Array3::zeros((8, 8, 3));
+
+        for y in 2..6 {
+            for x in 2..6 {
+                mask[[y, x, 0]] = 7; // class id, not alpha
+            }
+        }
+
+        let objects = extract_objects_from_mask(image.view(), mask.view());
+        assert_eq!(objects.len(), 1);
+        let extracted = &objects[0];
+        assert_eq!(extracted.class_id, 7);
+
+        let unique_values: std::collections::HashSet<u8> = extracted.mask.iter().copied().collect();
+        assert!(
+            unique_values.iter().all(|&v| v == 0 || v == 255),
+            "mask used for blending should be binary"
+        );
+        assert!(
+            unique_values.contains(&255),
+            "mask should retain opaque coverage for the object"
+        );
     }
 
     #[test]
@@ -882,6 +913,33 @@ mod tests {
     }
 
     #[test]
+    fn test_compose_objects_binary_mask_results_in_full_overlay() {
+        let mut output_image: Array3<u8> = Array3::zeros((20, 20, 3));
+        let obj_image = Array3::from_elem((5, 5, 3), 200u8);
+        let obj_mask = Array3::from_elem((5, 5, 3), 255u8);
+
+        let placed = vec![PlacedObject {
+            bbox: (5.0, 5.0, 10.0, 10.0),
+            image: obj_image,
+            mask: obj_mask,
+            class_id: 4,
+            rotation: 0.0,
+        }];
+
+        compose_objects(&mut output_image, &placed, BlendMode::Normal);
+
+        for y in 5..10 {
+            for x in 5..10 {
+                assert_eq!(
+                    output_image[[y, x, 0]],
+                    200,
+                    "Binary mask should yield full overlay intensity"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_update_output_mask() {
         let mut output_mask: Array3<u8> = Array3::zeros((100, 100, 3));
 
@@ -907,6 +965,34 @@ mod tests {
             }
         }
         assert!(updated, "Mask should be updated with placed objects");
+    }
+
+    #[test]
+    fn test_update_output_mask_preserves_class_ids() {
+        let mut output_mask: Array3<u8> = Array3::zeros((30, 30, 3));
+
+        let obj_mask = Array3::from_elem((6, 6, 3), 255u8);
+        let placed = vec![
+            PlacedObject {
+                bbox: (2.0, 2.0, 8.0, 8.0),
+                image: Array3::zeros((6, 6, 3)),
+                mask: obj_mask.clone(),
+                class_id: 7,
+                rotation: 0.0,
+            },
+            PlacedObject {
+                bbox: (10.0, 10.0, 16.0, 16.0),
+                image: Array3::zeros((6, 6, 3)),
+                mask: obj_mask,
+                class_id: 9,
+                rotation: 0.0,
+            },
+        ];
+
+        update_output_mask(&mut output_mask, &placed);
+
+        assert_eq!(output_mask[[2, 2, 0]], 7);
+        assert_eq!(output_mask[[10, 10, 0]], 9);
     }
 
     #[test]
@@ -1972,5 +2058,113 @@ mod tests {
         // Try to place zero objects
         let placed = place_objects(&[], 100, 100, false, false, (0.0, 0.0), (1.0, 1.0), 0.01);
         assert_eq!(placed.len(), 0);
+    }
+
+    #[test]
+    fn test_generate_output_bboxes_with_rotation_metadata() {
+        let placed = vec![
+            PlacedObject {
+                bbox: (1.0, 2.0, 3.0, 4.0),
+                image: Array3::zeros((5, 5, 3)),
+                mask: Array3::from_elem((5, 5, 3), 255u8),
+                class_id: 5,
+                rotation: 15.0,
+            },
+            PlacedObject {
+                bbox: (10.0, 12.0, 20.0, 22.0),
+                image: Array3::zeros((4, 4, 3)),
+                mask: Array3::from_elem((4, 4, 3), 255u8),
+                class_id: 2,
+                rotation: -30.0,
+            },
+        ];
+
+        let metadata = generate_output_bboxes_with_rotation(&placed);
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[0], [1.0, 2.0, 3.0, 4.0, 5.0, 15.0]);
+        assert_eq!(metadata[1], [10.0, 12.0, 20.0, 22.0, 2.0, -30.0]);
+    }
+
+    fn build_test_object(width: usize, height: usize, class_id: u32) -> ExtractedObject {
+        ExtractedObject {
+            image: Array3::from_elem((height, width, 3), 111u8),
+            mask: Array3::from_elem((height, width, 3), 255u8),
+            bbox: (0, 0, width as u32, height as u32),
+            class_id,
+        }
+    }
+
+    #[rstest]
+    #[case(8, 6, 64, 64)]
+    #[case(12, 10, 96, 80)]
+    fn rstest_place_objects_stay_within_bounds(
+        #[case] obj_width: usize,
+        #[case] obj_height: usize,
+        #[case] image_width: u32,
+        #[case] image_height: u32,
+    ) {
+        let object = build_test_object(obj_width, obj_height, 3);
+        let placed = place_objects(
+            &[object],
+            image_width,
+            image_height,
+            true,
+            true,
+            (-10.0, 10.0),
+            (0.9, 1.1),
+            0.01,
+        );
+
+        assert_eq!(placed.len(), 1, "object should be placed inside bounds");
+        let bbox = placed[0].bbox;
+        assert!(bbox.0 >= 0.0 && bbox.1 >= 0.0);
+        assert!(bbox.2 <= image_width as f32 && bbox.3 <= image_height as f32);
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_iou_is_symmetric_and_bounded(
+            bbox1 in arb_bbox(),
+            bbox2 in arb_bbox(),
+        ) {
+            let iou_ab = super::super::collision::calculate_iou(bbox1, bbox2);
+            let iou_ba = super::super::collision::calculate_iou(bbox2, bbox1);
+
+            prop_assert!((iou_ab - iou_ba).abs() < 1e-5);
+            prop_assert!(iou_ab >= 0.0);
+            prop_assert!(iou_ab <= 1.0 + 1e-5);
+        }
+    }
+
+    fn arb_bbox() -> impl Strategy<Value = (f32, f32, f32, f32)> {
+        (0.0f32..256.0, 0.0f32..256.0, 4.0f32..64.0, 4.0f32..64.0).prop_map(|(x, y, w, h)| {
+            let x2 = (x + w).min(512.0);
+            let y2 = (y + h).min(512.0);
+            (x, y, x2, y2)
+        })
+    }
+
+    #[test]
+    fn snapshot_bbox_metadata_basic() {
+        let placed = vec![
+            PlacedObject {
+                bbox: (4.0, 5.0, 14.0, 15.0),
+                image: Array3::from_elem((10, 10, 3), 200u8),
+                mask: Array3::from_elem((10, 10, 3), 255u8),
+                class_id: 7,
+                rotation: 12.0,
+            },
+            PlacedObject {
+                bbox: (20.0, 25.0, 32.0, 33.0),
+                image: Array3::from_elem((8, 12, 3), 50u8),
+                mask: Array3::from_elem((8, 12, 3), 255u8),
+                class_id: 2,
+                rotation: -30.0,
+            },
+        ];
+
+        let metadata = generate_output_bboxes_with_rotation(&placed);
+        assert_yaml_snapshot!("bbox_metadata_basic", metadata);
     }
 }

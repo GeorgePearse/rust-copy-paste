@@ -1,7 +1,6 @@
 """Create a dummy dataset with shapes for testing."""
 
 import json
-import os
 from pathlib import Path
 
 import cv2
@@ -66,7 +65,9 @@ def create_dummy_dataset(output_dir: str = "tests/dummy_dataset") -> dict:
     for shape_name, category_id, draw_func in shapes:
         for i in range(3):
             # Create image and mask
-            image = np.ones((image_size, image_size, 3), dtype=np.uint8) * 255  # White background
+            image = (
+                np.ones((image_size, image_size, 3), dtype=np.uint8) * 255
+            )  # White background
             mask = np.zeros((image_size, image_size), dtype=np.uint8)
 
             # Draw shape
@@ -83,12 +84,14 @@ def create_dummy_dataset(output_dir: str = "tests/dummy_dataset") -> dict:
             cv2.imwrite(str(mask_path), mask)
 
             # Add image to COCO
-            coco_data["images"].append({
-                "id": image_id,
-                "file_name": image_filename,
-                "height": image_size,
-                "width": image_size,
-            })
+            coco_data["images"].append(
+                {
+                    "id": image_id,
+                    "file_name": image_filename,
+                    "height": image_size,
+                    "width": image_size,
+                }
+            )
 
             # Calculate bounding box from mask
             coords = np.where(mask > 0)
@@ -99,15 +102,17 @@ def create_dummy_dataset(output_dir: str = "tests/dummy_dataset") -> dict:
                 area = int(np.sum(mask > 0))
 
                 # Add annotation to COCO
-                coco_data["annotations"].append({
-                    "id": annotation_id,
-                    "image_id": image_id,
-                    "category_id": category_id,
-                    "bbox": bbox,
-                    "area": area,
-                    "iscrowd": 0,
-                    "segmentation": mask_to_coco_rle(mask),
-                })
+                coco_data["annotations"].append(
+                    {
+                        "id": annotation_id,
+                        "image_id": image_id,
+                        "category_id": category_id,
+                        "bbox": bbox,
+                        "area": area,
+                        "iscrowd": 0,
+                        "segmentation": mask_to_coco_rle(mask),
+                    }
+                )
 
                 annotation_id += 1
 
@@ -133,11 +138,14 @@ def draw_triangle(image: np.ndarray, mask: np.ndarray) -> None:
     size = 80
 
     # Define triangle points
-    points = np.array([
-        [center_x, center_y - size],  # Top
-        [center_x - size, center_y + size],  # Bottom left
-        [center_x + size, center_y + size],  # Bottom right
-    ], dtype=np.int32)
+    points = np.array(
+        [
+            [center_x, center_y - size],  # Top
+            [center_x - size, center_y + size],  # Bottom left
+            [center_x + size, center_y + size],  # Bottom right
+        ],
+        dtype=np.int32,
+    )
 
     color = (0, 0, 255)  # Red in BGR
     cv2.fillPoly(image, [points], color)
