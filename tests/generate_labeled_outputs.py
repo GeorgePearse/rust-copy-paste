@@ -286,18 +286,30 @@ def main() -> bool:
         # Apply augmentation
         try:
             augmented_img = transform.apply(original_img.copy(), mask=mask)
+            augmented_mask = transform.apply_to_mask(mask.copy())
+
             if augmented_img is None:
                 print("    ⚠️  Transform returned None")
                 continue
 
-            # Detect objects in augmented image
-            augmented_objects = detect_objects_in_image(augmented_img)
-            print(f"    Detected {len(augmented_objects)} object(s) in augmented")
+            # Draw yellow contours from actual mask output
+            if augmented_mask is not None and augmented_mask.max() > 0:
+                contours, _ = cv2.findContours(
+                    augmented_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                )
+                augmented_annotated = augmented_img.copy()
+                # Draw yellow segmentation contours from actual masks
+                cv2.drawContours(augmented_annotated, contours, -1, (0, 255, 255), 2, cv2.LINE_AA)
+                print(f"    Detected {len(contours)} mask contour(s) in augmented")
+            else:
+                # Fallback to color detection if no mask
+                augmented_objects = detect_objects_in_image(augmented_img)
+                print(f"    Detected {len(augmented_objects)} object(s) in augmented (color detected)")
+                # Draw segmentation and labels on augmented
+                augmented_annotated = draw_segmentation_and_labels(
+                    augmented_img, augmented_objects
+                )
 
-            # Draw segmentation and labels on augmented
-            augmented_annotated = draw_segmentation_and_labels(
-                augmented_img, augmented_objects
-            )
             augmented_with_title = add_title(augmented_annotated, "Augmented")
 
             # Save individual labeled images
