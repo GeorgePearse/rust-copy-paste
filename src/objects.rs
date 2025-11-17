@@ -419,6 +419,50 @@ fn transform_patch(
     (output_image, output_mask, offset_x, offset_y)
 }
 
+/// Calculate tight bounding box from actual mask content
+///
+/// Scans the mask array for non-zero pixels and returns the min/max
+/// coordinates, providing a tight fit around the actual object pixels.
+///
+/// # Arguments
+/// * `mask` - Mask array (H, W, C) where non-zero values represent the object
+///
+/// # Returns
+/// Tuple of (x_min, y_min, x_max, y_max) in pixel coordinates, or None if mask is empty
+fn calculate_tight_bbox_from_mask(mask: &Array3<u8>) -> Option<(usize, usize, usize, usize)> {
+    let height = mask.shape()[0];
+    let width = mask.shape()[1];
+
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut found_pixel = false;
+
+    // Scan all pixels to find non-zero mask values
+    for y in 0..height {
+        for x in 0..width {
+            // Check if any channel has non-zero value
+            let has_mask = mask[[y, x, 0]] > 0;
+
+            if has_mask {
+                found_pixel = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    if found_pixel {
+        // Add 1 to max values to make them exclusive (standard bbox convention)
+        Some((min_x, min_y, max_x + 1, max_y + 1))
+    } else {
+        None
+    }
+}
+
 /// Place objects onto target image with collision detection
 ///
 /// # Arguments
@@ -543,13 +587,32 @@ pub fn place_objects(
             .slice(s![y_start..y_end, x_start..x_end, ..])
             .to_owned();
 
-        let cropped_width = transformed_image.shape()[1] as f32;
-        let cropped_height = transformed_image.shape()[0] as f32;
+        // Calculate tight bbox from actual mask pixels
+        let tight_bbox = match calculate_tight_bbox_from_mask(&transformed_mask) {
+            Some(bbox) => bbox,
+            None => continue, // No mask pixels found, skip this object
+        };
 
-        let final_x_min = (raw_bbox.0 + x_start as f32).clamp(0.0, image_width_f);
-        let final_y_min = (raw_bbox.1 + y_start as f32).clamp(0.0, image_height_f);
-        let final_x_max = (final_x_min + cropped_width).min(image_width_f);
-        let final_y_max = (final_y_min + cropped_height).min(image_height_f);
+        let (tight_x_min, tight_y_min, tight_x_max, tight_y_max) = tight_bbox;
+
+        // Further crop to tight bounds
+        transformed_image = transformed_image
+            .slice(s![tight_y_min..tight_y_max, tight_x_min..tight_x_max, ..])
+            .to_owned();
+        transformed_mask = transformed_mask
+            .slice(s![tight_y_min..tight_y_max, tight_x_min..tight_x_max, ..])
+            .to_owned();
+
+        let tight_width = transformed_image.shape()[1] as f32;
+        let tight_height = transformed_image.shape()[0] as f32;
+
+        // Calculate final bbox accounting for both initial crop and tight bbox
+        let final_x_min =
+            (raw_bbox.0 + x_start as f32 + tight_x_min as f32).clamp(0.0, image_width_f);
+        let final_y_min =
+            (raw_bbox.1 + y_start as f32 + tight_y_min as f32).clamp(0.0, image_height_f);
+        let final_x_max = (final_x_min + tight_width).min(image_width_f);
+        let final_y_max = (final_y_min + tight_height).min(image_width_f);
 
         if final_x_max - final_x_min <= 0.0 || final_y_max - final_y_min <= 0.0 {
             continue;
