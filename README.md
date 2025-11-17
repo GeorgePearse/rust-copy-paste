@@ -17,25 +17,37 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 ## Visual Examples
 
-See the copy-paste augmentation in action with our test dataset. Each example shows 2-3 objects extracted from different source images, with each object receiving independent random transformations (rotation ±180°, scaling 0.85-1.25x, random positioning):
+See the copy-paste augmentation in action with our test dataset. Each example shows 2-3 objects extracted from different source images, with each object receiving independent random transformations (rotation ±180°, scaling 0.85-1.25x, random positioning).
 
-<table>
-<tr>
-<td align="center"><b>Example 1</b></td>
-<td align="center"><b>Example 2</b></td>
-<td align="center"><b>Example 3</b></td>
-</tr>
-<tr>
-<td><img src="tests/augmented_outputs/augmented_000_v0.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_000_v1.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_001_v0.png" width="340"/></td>
-</tr>
-<tr>
-<td align="center"><i>2 circles + 1 square<br/>Each independently rotated</i></td>
-<td align="center"><i>1 circle + 2 squares<br/>Different rotations per object</i></td>
-<td align="center"><i>3 triangles + 2 squares<br/>Independent transforms</i></td>
-</tr>
-</table>
+### Augmentation with Class Names and Segmentation Masks
+
+Each augmented output includes:
+- **Class names** for every pasted object (triangle, circle, square)
+- **Rotation angles** for each transformation
+- **Segmentation masks** with proper class IDs for semantic segmentation
+
+<div align="center">
+<img src="tests/augmented_outputs/readme_legend.png" alt="Segmentation Legend" width="400"/>
+</div>
+
+The visualizations below show (left to right): **Original Augmented | Annotated with Labels | Segmentation Mask**
+
+<div align="center">
+<img src="tests/augmented_outputs/readme_showcase_000.png" alt="Example 1" width="900"/>
+<br/><i>2 triangles with independent rotations (31° and -122°)</i>
+</div>
+
+<div align="center">
+<img src="tests/augmented_outputs/readme_showcase_003.png" alt="Example 2" width="900"/>
+<br/><i>2 circles + 1 triangle with mixed rotations (-107°, -158°, and 21°)</i>
+</div>
+
+<div align="center">
+<img src="tests/augmented_outputs/readme_showcase_006.png" alt="Example 3" width="900"/>
+<br/><i>2 circles + 1 square showing diverse object types (-4°, 53°, and 120°)</i>
+</div>
+
+### Additional Examples
 
 <table>
 <tr>
@@ -44,14 +56,9 @@ See the copy-paste augmentation in action with our test dataset. Each example sh
 <td align="center"><b>Example 6</b></td>
 </tr>
 <tr>
-<td><img src="tests/augmented_outputs/augmented_005_v1.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_008_v0.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_001_v1.png" width="340"/></td>
-</tr>
-<tr>
-<td align="center"><i>Triangle + circles + square<br/>Mixed colors and rotations</i></td>
-<td align="center"><i>3 circles + 1 square<br/>Spread across canvas</i></td>
-<td align="center"><i>2 blue squares<br/>Different rotation angles</i></td>
+<td><img src="tests/augmented_outputs/augmented_000_v0.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_000_v1.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_001_v0.png" width="340"/></td>
 </tr>
 </table>
 
