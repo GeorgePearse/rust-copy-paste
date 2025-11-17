@@ -17,7 +17,7 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 ## Visual Examples
 
-See the copy-paste augmentation in action with our test dataset:
+See the copy-paste augmentation in action with our test dataset. Each example shows the original image with segmentation mask overlay and class label, alongside the augmented result:
 
 ### Triangles
 
@@ -27,8 +27,8 @@ See the copy-paste augmentation in action with our test dataset:
 <td><b>Augmented</b></td>
 </tr>
 <tr>
-<td><img src="tests/dummy_dataset/images/triangle_000.png" width="256"/></td>
-<td><img src="tests/augmented_outputs/augmented_000.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/labeled/triangle_original_labeled.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/labeled/triangle_augmented_labeled.png" width="256"/></td>
 </tr>
 </table>
 
@@ -40,8 +40,8 @@ See the copy-paste augmentation in action with our test dataset:
 <td><b>Augmented</b></td>
 </tr>
 <tr>
-<td><img src="tests/dummy_dataset/images/circle_000.png" width="256"/></td>
-<td><img src="tests/augmented_outputs/augmented_003.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/labeled/circle_original_labeled.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/labeled/circle_augmented_labeled.png" width="256"/></td>
 </tr>
 </table>
 
@@ -53,16 +53,17 @@ See the copy-paste augmentation in action with our test dataset:
 <td><b>Augmented</b></td>
 </tr>
 <tr>
-<td><img src="tests/dummy_dataset/images/square_000.png" width="256"/></td>
-<td><img src="tests/augmented_outputs/augmented_006.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/labeled/square_original_labeled.png" width="256"/></td>
+<td><img src="tests/augmented_outputs/labeled/square_augmented_labeled.png" width="256"/></td>
 </tr>
 </table>
 
 The augmentation successfully:
-- ✅ Extracts objects using mask-based detection
+- ✅ Extracts objects using mask-based detection (shown in red/green/blue overlays)
 - ✅ Applies random rotation (0-360°) with smooth bilinear interpolation
 - ✅ Pastes objects at random positions without collisions
 - ✅ Maintains clean edges and proper alpha blending
+- ✅ Preserves object class information throughout the pipeline
 
 ## Installation
 
