@@ -439,12 +439,11 @@ fn calculate_tight_bbox_from_mask(mask: &Array3<u8>) -> Option<(usize, usize, us
     let mut max_y = 0;
     let mut found_pixel = false;
 
-    // Scan all pixels to find mask values above threshold
-    // Use threshold > 127 to ignore faint edge pixels from bilinear interpolation
+    // Scan all pixels to find non-zero mask values
     for y in 0..height {
         for x in 0..width {
-            // Check if any channel has value above threshold (more than 50% opaque)
-            let has_mask = mask[[y, x, 0]] > 127;
+            // Check if any channel has non-zero value
+            let has_mask = mask[[y, x, 0]] > 0;
 
             if has_mask {
                 found_pixel = true;
