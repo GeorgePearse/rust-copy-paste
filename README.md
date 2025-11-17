@@ -17,52 +17,53 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 ## Visual Examples
 
-See the copy-paste augmentation in action with our test dataset. The algorithm extracts objects from different source images, applies random transformations (rotation ±180°, scaling 0.85-1.25x), and combines them into synthetic composite images:
+See the copy-paste augmentation in action with our test dataset. Each example shows 2-3 objects extracted from different source images, with each object receiving independent random transformations (rotation ±180°, scaling 0.85-1.25x, random positioning):
 
 <table>
 <tr>
-<td align="center"><b>Mixed Shapes Example 1</b></td>
-<td align="center"><b>Mixed Shapes Example 2</b></td>
-<td align="center"><b>Mixed Shapes Example 3</b></td>
+<td align="center"><b>Example 1</b></td>
+<td align="center"><b>Example 2</b></td>
+<td align="center"><b>Example 3</b></td>
 </tr>
 <tr>
 <td><img src="tests/augmented_outputs/augmented_000_v0.png" width="340"/></td>
 <td><img src="tests/augmented_outputs/augmented_000_v1.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_003_v2.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_001_v0.png" width="340"/></td>
 </tr>
 <tr>
-<td align="center"><i>Blue square + green circles</i></td>
-<td align="center"><i>Red triangle + green circle</i></td>
-<td align="center"><i>Green circle + red triangles</i></td>
+<td align="center"><i>2 circles + 1 square<br/>Each independently rotated</i></td>
+<td align="center"><i>1 circle + 2 squares<br/>Different rotations per object</i></td>
+<td align="center"><i>3 triangles + 2 squares<br/>Independent transforms</i></td>
 </tr>
 </table>
 
 <table>
 <tr>
-<td align="center"><b>Complex Composition 1</b></td>
-<td align="center"><b>Complex Composition 2</b></td>
-<td align="center"><b>Complex Composition 3</b></td>
+<td align="center"><b>Example 4</b></td>
+<td align="center"><b>Example 5</b></td>
+<td align="center"><b>Example 6</b></td>
 </tr>
 <tr>
-<td><img src="tests/augmented_outputs/augmented_008_v2.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_006_v1.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_007_v1.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_005_v1.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_008_v0.png" width="340"/></td>
+<td><img src="tests/augmented_outputs/augmented_001_v1.png" width="340"/></td>
 </tr>
 <tr>
-<td align="center"><i>All three shapes with rotation</i></td>
-<td align="center"><i>Rotated blue squares</i></td>
-<td align="center"><i>Mixed red triangle + green circle</i></td>
+<td align="center"><i>Triangle + circles + square<br/>Mixed colors and rotations</i></td>
+<td align="center"><i>3 circles + 1 square<br/>Spread across canvas</i></td>
+<td align="center"><i>2 blue squares<br/>Different rotation angles</i></td>
 </tr>
 </table>
 
 ### Key Features Demonstrated
 
 The augmentation successfully:
-- ✅ **Mixes objects from different sources** - combines triangles, circles, and squares from separate images
-- ✅ **Applies random rotation** (±180°) with smooth bilinear interpolation
+- ✅ **Extracts individual objects** from different source images
+- ✅ **Independent transformations** - each object gets its own random rotation, scale, and position
+- ✅ **Random rotation** (±180°) with smooth bilinear interpolation
 - ✅ **Random scaling** (0.85-1.25x) to create size variation
 - ✅ **Random positioning** with collision detection to prevent overlaps
-- ✅ **Combines multiple colors** - red, green, and blue objects in the same scene
+- ✅ **Mixes multiple colors** - red, green, and blue objects in the same scene
 - ✅ **Maintains clean edges** with proper alpha blending
 - ✅ **Creates realistic synthetic data** for training object detection models
 

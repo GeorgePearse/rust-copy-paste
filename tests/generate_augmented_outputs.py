@@ -42,81 +42,58 @@ def collect_rotation_metadata(transform: SimpleCopyPaste) -> list[dict[str, Any]
     return metadata
 
 
-def create_mixed_source(
-    all_images: list[np.ndarray],
-    all_masks: list[np.ndarray],
-    num_shapes: int = 3,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Create a composite source image with multiple random shapes for mixing."""
-    # Start with white canvas
-    h, w = all_images[0].shape[:2]
-    composite_img = np.full((h, w, 3), 255, dtype=np.uint8)
-    composite_mask = np.zeros((h, w), dtype=np.uint8)
-
-    # Randomly select shapes to include
-    selected_indices = np.random.choice(len(all_images), size=num_shapes, replace=True)
-
-    for idx in selected_indices:
-        src_img = all_images[idx]
-        src_mask = all_masks[idx]
-
-        # Find object region in source
-        object_pixels = src_mask > 0
-
-        # Copy object to composite (without rotation/scaling - that happens later)
-        if object_pixels.any():
-            composite_img[object_pixels] = src_img[object_pixels]
-            composite_mask[object_pixels] = src_mask[object_pixels]
-
-    return composite_img, composite_mask
-
-
 def run_pipeline_variant(
     transform: SimpleCopyPaste,
     base_img: np.ndarray,
     all_images: list[np.ndarray],
     all_masks: list[np.ndarray],
 ) -> tuple[np.ndarray, int, list[dict[str, Any]]]:
-    """Run the Simple Copy-Paste pipeline with mixed shapes from random sources."""
+    """Run the Simple Copy-Paste pipeline with individually transformed objects from random sources."""
 
-    last_image = base_img.copy()
-    last_changed = 0
-    last_metadata: list[dict[str, Any]] = []
+    # Start with white canvas
+    h, w = base_img.shape[:2]
+    canvas = np.full((h, w, 3), 255, dtype=np.uint8)
+    working_image = canvas.copy()
+    all_metadata: list[dict[str, Any]] = []
 
-    for attempt in range(1, MAX_ATTEMPTS_PER_VARIANT + 1):
-        # Create a composite source with 2-3 random shapes
-        num_shapes = np.random.randint(2, 4)
-        composite_img, composite_mask = create_mixed_source(
-            all_images, all_masks, num_shapes
+    # Randomly select 2-3 different source objects to paste
+    num_objects = np.random.randint(2, 4)
+
+    for obj_idx in range(num_objects):
+        # Randomly select a source image
+        source_idx = np.random.randint(0, len(all_images))
+        source_img = all_images[source_idx]
+        source_mask = all_masks[source_idx]
+
+        # Apply transform to this single object (with random rotation/scale/position)
+        augmented = transform.apply(
+            source_img.copy(),
+            mask=source_mask[:, :, np.newaxis],
         )
 
-        # Apply transform to the composite
-        augmented_image = transform.apply(
-            composite_img,
-            mask=composite_mask[:, :, np.newaxis],  # Add channel dimension
-        )
+        if augmented is None:
+            continue
 
-        if augmented_image is None:
-            print("    ⚠️  Transform returned None; aborting attempt")
-            break
+        # Get metadata for this object
+        metadata = collect_rotation_metadata(transform)
+        if metadata:
+            all_metadata.extend(metadata)
 
-        # Compare against white background
-        canvas = np.full_like(base_img, 255, dtype=np.uint8)
-        changed_pixels = int(np.count_nonzero(augmented_image != canvas))
-        rotation_metadata = collect_rotation_metadata(transform)
+        # Composite the augmented object onto our working canvas
+        # Find non-white pixels in the augmented output
+        mask_fg = np.any(augmented != 255, axis=2)
 
-        if changed_pixels > 0 and rotation_metadata:
-            return augmented_image, changed_pixels, rotation_metadata
+        # Paste onto working image
+        working_image[mask_fg] = augmented[mask_fg]
 
-        print(
-            f"    ⚠️  Attempt {attempt} had no pasted objects; retrying to ensure pipeline runs"
-        )
-        last_image = augmented_image
-        last_changed = changed_pixels
-        last_metadata = rotation_metadata
+    # Check if we actually pasted anything
+    changed_pixels = int(np.count_nonzero(working_image != canvas))
 
-    # If we reach here, fall back to last attempt
-    return last_image, last_changed, last_metadata
+    if changed_pixels > 0 and all_metadata:
+        return working_image, changed_pixels, all_metadata
+
+    # If we didn't get any objects, return empty result
+    return canvas, 0, []
 
 
 def main():
