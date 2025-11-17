@@ -9,9 +9,72 @@ This script tests the copy_paste transform by:
 
 import json
 from pathlib import Path
+from typing import Any
 
 import cv2
-from copy_paste import CopyPasteAugmentation
+import numpy as np
+from copy_paste import SimpleCopyPaste
+
+
+VARIANTS_PER_IMAGE = 3
+MAX_ATTEMPTS_PER_VARIANT = 5
+
+
+def collect_rotation_metadata(transform: SimpleCopyPaste) -> list[dict[str, Any]]:
+    """Pull rotation metadata from the most recent pipeline run."""
+
+    bbox_metadata = transform.apply_to_bboxes(np.empty((0, 4), dtype=np.float32))
+    bbox_array = np.asarray(bbox_metadata)
+
+    metadata: list[dict[str, Any]] = []
+    for row in bbox_array:
+        metadata.append(
+            {
+                "x_min": float(row[0]),
+                "y_min": float(row[1]),
+                "x_max": float(row[2]),
+                "y_max": float(row[3]),
+                "class_id": int(round(row[4])),
+                "rotation_deg": float(row[5]),
+            }
+        )
+
+    return metadata
+
+
+def run_pipeline_variant(
+    transform: SimpleCopyPaste,
+    original_img: np.ndarray,
+    mask: np.ndarray,
+) -> tuple[np.ndarray, int, list[dict[str, Any]]]:
+    """Run the Simple Copy-Paste pipeline until it applies a random transform."""
+
+    last_image = original_img.copy()
+    last_changed = 0
+    last_metadata: list[dict[str, Any]] = []
+
+    for attempt in range(1, MAX_ATTEMPTS_PER_VARIANT + 1):
+        augmented_image = transform.apply(original_img.copy(), mask=mask)
+
+        if augmented_image is None:
+            print("    ⚠️  Transform returned None; aborting attempt")
+            break
+
+        changed_pixels = int(np.count_nonzero(augmented_image != original_img))
+        rotation_metadata = collect_rotation_metadata(transform)
+
+        if changed_pixels > 0 and rotation_metadata:
+            return augmented_image, changed_pixels, rotation_metadata
+
+        print(
+            f"    ⚠️  Attempt {attempt} had no pasted objects; retrying to ensure pipeline runs"
+        )
+        last_image = augmented_image
+        last_changed = changed_pixels
+        last_metadata = rotation_metadata
+
+    # If we reach here, fall back to last attempt even if it had no placements
+    return last_image, last_changed, last_metadata
 
 
 def main():
@@ -46,15 +109,17 @@ def main():
 
     # Create transform
     try:
-        transform = CopyPasteAugmentation(
+        transform = SimpleCopyPaste(
             image_width=512,
             image_height=512,
-            max_paste_objects=2,
-            scale_range=(1.0, 1.0),
-            rotation_range=(0, 360),
+            max_paste_objects=3,
+            use_rotation=True,
+            rotation_range=(-180.0, 180.0),
+            use_scaling=True,
+            scale_range=(0.85, 1.25),
             p=1.0,
         )
-        print("🦀 Using CopyPasteAugmentation transform")
+        print("🦀 Using SimpleCopyPaste pipeline")
     except (RuntimeError, TypeError) as e:
         print(f"⚠️  CopyPasteAugmentation not available: {e}")
         print("🐍 Skipping augmentation generation")
@@ -96,37 +161,53 @@ def main():
             continue
 
         # Apply transform to image using the .apply() method with mask
-        try:
-            augmented_img = transform.apply(original_img.copy(), mask=mask)
+        for variant_idx in range(VARIANTS_PER_IMAGE):
+            try:
+                augmented_img, changed_pixels, rotation_metadata = run_pipeline_variant(
+                    transform, original_img, mask
+                )
 
-            if augmented_img is None:
-                print("  ⚠️  Transform returned None")
+                if augmented_img is None:
+                    print("  ⚠️  Transform returned None")
+                    continue
+
+                output_filename = f"augmented_{img_idx:03d}_v{variant_idx}.png"
+                output_path = output_dir / output_filename
+                cv2.imwrite(str(output_path), augmented_img)
+
+                if changed_pixels == 0 or not rotation_metadata:
+                    print(
+                        "  ⚠️  Saved output but pipeline produced no detectable rotations"
+                    )
+                else:
+                    rotations = ", ".join(
+                        f"{meta['rotation_deg']:.1f}°" for meta in rotation_metadata
+                    )
+                    print(
+                        f"  🎲 Variant {variant_idx + 1}: {len(rotation_metadata)} objects | rotations: {rotations}"
+                    )
+
+                results.append(
+                    {
+                        "original": img_info["file_name"],
+                        "augmented": output_filename,
+                        "variant": variant_idx,
+                        "width": width,
+                        "height": height,
+                        "changed_pixels": changed_pixels,
+                        "rotations": rotation_metadata,
+                    }
+                )
+
+            except Exception as e:
+                print(f"  ❌ Error during augmentation: {e}")
                 continue
-
-            # Save augmented image
-            output_filename = f"augmented_{img_idx:03d}.png"
-            output_path = output_dir / output_filename
-            cv2.imwrite(str(output_path), augmented_img)
-
-            print("  ✅ Augmented image saved")
-
-            results.append(
-                {
-                    "original": img_info["file_name"],
-                    "augmented": output_filename,
-                    "width": width,
-                    "height": height,
-                }
-            )
-
-        except Exception as e:
-            print(f"  ❌ Error during augmentation: {e}")
-            continue
 
     # Save metadata
     metadata = {
         "timestamp": str(Path(__file__).stat().st_mtime),
         "num_processed": len(results),
+        "variants_per_image": VARIANTS_PER_IMAGE,
         "images": results,
         "classes": class_list,
     }
