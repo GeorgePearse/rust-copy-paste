@@ -40,6 +40,7 @@ nav:
     - Albumentations Integration: user-guide/albumentations.md
     - Configuration: user-guide/configuration.md
     - API Reference: user-guide/api-reference.md
+    - Gemini Integration: gemini.md
   - Development:
     - Contributing: development/contributing.md
     - Building from Source: development/building.md
