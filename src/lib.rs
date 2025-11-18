@@ -30,7 +30,7 @@ pub struct AugmentationConfig {
     #[pyo3(get, set)]
     pub max_paste_objects: u32,
     #[pyo3(get)]
-    pub object_counts: HashMap<u32, u32>, // class_id -> exact count to paste
+    pub object_counts: HashMap<u32, f32>, // class_id -> count (>=1.0) or probability (0.0-1.0)
     #[pyo3(get, set)]
     pub use_rotation: bool,
     #[pyo3(get, set)]
@@ -59,7 +59,7 @@ impl AugmentationConfig {
         scale_range: (f32, f32),
         use_random_background: bool,
         blend_mode: String,
-        object_counts: Option<HashMap<u32, u32>>,
+        object_counts: Option<HashMap<u32, f32>>,
     ) -> Self {
         AugmentationConfig {
             image_width,
@@ -125,7 +125,7 @@ impl CopyPasteTransform {
         use_scaling: bool,
         use_random_background: bool,
         blend_mode: String,
-        object_counts: Option<HashMap<u32, u32>>,
+        object_counts: Option<HashMap<u32, f32>>,
         rotation_range: Option<(f32, f32)>,
         scale_range: Option<(f32, f32)>,
     ) -> Self {

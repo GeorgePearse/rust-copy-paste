@@ -210,13 +210,13 @@ fn extract_object_patch(
 ///
 /// # Arguments
 /// * `available_objects` - Vec of extracted objects grouped by class_id
-/// * `object_counts` - HashMap specifying how many objects to paste per class
+/// * `object_counts` - HashMap specifying count (>= 1.0) or probability (0.0-1.0) per class
 ///
 /// # Returns
 /// Vector of selected objects ready to paste
 pub fn select_objects_by_class(
     available_objects: &HashMap<u32, Vec<ExtractedObject>>,
-    object_counts: &HashMap<u32, u32>,
+    object_counts: &HashMap<u32, f32>,
     max_paste_objects: u32,
 ) -> Vec<ExtractedObject> {
     if max_paste_objects == 0 {
@@ -259,15 +259,35 @@ pub fn select_objects_by_class(
             total_selected += safe_count;
         }
     } else {
-        // Use specified object counts per class
-        for (class_id, count) in object_counts.iter() {
+        // Use specified object counts per class (support both counts and probabilities)
+        for (class_id, value) in object_counts.iter() {
             if total_selected >= global_cap {
                 break;
             }
 
             if let Some(objects) = available_objects.get(class_id) {
+                // Determine actual count based on value
+                let actual_count = if *value >= 1.0 {
+                    // Deterministic count (>= 1.0): round to nearest integer
+                    (*value).round() as usize
+                } else if *value > 0.0 && *value < 1.0 {
+                    // Probability (0.0-1.0): sample to get 0 or 1
+                    if rng.gen::<f32>() < *value {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    // value == 0.0 or negative: skip this class
+                    0
+                };
+
+                if actual_count == 0 {
+                    continue;
+                }
+
                 let remaining_global = global_cap - total_selected;
-                let per_class_cap = (*count as usize).min(objects.len());
+                let per_class_cap = actual_count.min(objects.len());
                 let count_to_select = per_class_cap.min(remaining_global);
 
                 if count_to_select == 0 {
@@ -904,7 +924,7 @@ mod tests {
         objects.insert(0, vec![obj1.clone(), obj1.clone(), obj1.clone()]);
 
         let mut counts = HashMap::new();
-        counts.insert(0, 2);
+        counts.insert(0, 2.0);
 
         let selected = select_objects_by_class(&objects, &counts, 5);
         assert_eq!(selected.len(), 2);
@@ -1106,8 +1126,8 @@ mod tests {
         objects_by_class.insert(1, vec![obj2.clone()]);
 
         let mut counts = HashMap::new();
-        counts.insert(0, 1);
-        counts.insert(1, 1);
+        counts.insert(0, 1.0);
+        counts.insert(1, 1.0);
 
         let selected = select_objects_by_class(&objects_by_class, &counts, 10);
         assert_eq!(selected.len(), 2);
@@ -1158,8 +1178,8 @@ mod tests {
         objects_by_class.insert(1, class_b);
 
         let mut counts = HashMap::new();
-        counts.insert(0, 3);
-        counts.insert(1, 3);
+        counts.insert(0, 3.0);
+        counts.insert(1, 3.0);
 
         let selected = select_objects_by_class(&objects_by_class, &counts, 3);
         assert_eq!(selected.len(), 3);
@@ -1191,7 +1211,7 @@ mod tests {
         objects_by_class.insert(0, class_entries);
 
         let mut counts = HashMap::new();
-        counts.insert(0, 2);
+        counts.insert(0, 2.0);
 
         let selected = select_objects_by_class(&objects_by_class, &counts, 10);
         assert_eq!(selected.len(), 2);
@@ -1795,7 +1815,7 @@ mod tests {
         available.insert(1, vec![obj.clone(), obj.clone(), obj.clone()]);
 
         let mut counts = HashMap::new();
-        counts.insert(1, 2);
+        counts.insert(1, 2.0);
 
         let selected = select_objects_by_class(&available, &counts, 10);
         assert_eq!(selected.len(), 2);
@@ -2108,9 +2128,9 @@ mod tests {
         }
 
         let mut counts = HashMap::new();
-        counts.insert(0, 5);
-        counts.insert(1, 5);
-        counts.insert(2, 5);
+        counts.insert(0, 5.0);
+        counts.insert(1, 5.0);
+        counts.insert(2, 5.0);
 
         let selected = select_objects_by_class(&available, &counts, 15);
         assert_eq!(selected.len(), 15, "Should select exactly 15 objects");
@@ -2132,7 +2152,7 @@ mod tests {
     fn test_empty_object_selection() {
         // Select from empty object map
         let available: HashMap<u32, Vec<ExtractedObject>> = HashMap::new();
-        let counts: HashMap<u32, u32> = HashMap::new();
+        let counts: HashMap<u32, f32> = HashMap::new();
 
         let selected = select_objects_by_class(&available, &counts, 10);
         assert_eq!(
