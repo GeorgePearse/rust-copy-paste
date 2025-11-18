@@ -86,9 +86,9 @@ class CopyPasteAugmentation(A.DualTransform):
         # Validate object_counts
         if object_counts:
             for class_name, count in object_counts.items():
-                if not isinstance(count, int) or count < 0:
+                if not isinstance(count, (int, float)) or count < 0:
                     raise ValueError(
-                        f"object_counts['{class_name}'] must be non-negative integer, got {count}"
+                        f"object_counts['{class_name}'] must be non-negative number, got {count}"
                     )
 
         self.image_width = image_width
@@ -161,7 +161,9 @@ class CopyPasteAugmentation(A.DualTransform):
         Returns:
             Augmented image
         """
-        logger.debug(f"apply() called with image shape {img.shape}, params keys: {list(params.keys())}")
+        logger.debug(
+            f"apply() called with image shape {img.shape}, params keys: {list(params.keys())}"
+        )
         # Convert to uint8 if needed
         if img.dtype != np.uint8:
             img = (
@@ -178,9 +180,11 @@ class CopyPasteAugmentation(A.DualTransform):
         try:
             # Use cached mask (set in __call__) or fallback to params
             source_mask = self._prepare_mask(
-                self._cached_source_mask if self._cached_source_mask is not None else params.get("mask"),
+                self._cached_source_mask
+                if self._cached_source_mask is not None
+                else params.get("mask"),
                 img.shape[0],
-                img.shape[1]
+                img.shape[1],
             )
             target_mask = self._prepare_mask(
                 params.get("target_mask"), img.shape[0], img.shape[1]
