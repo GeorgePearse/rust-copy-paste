@@ -35,6 +35,7 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
     - Architecture: getting-started/architecture.md
+    - Migration Guide (v0.x → v1.x): migration-v1.md
   - User Guide:
     - Albumentations Integration: user-guide/albumentations.md
     - Configuration: user-guide/configuration.md

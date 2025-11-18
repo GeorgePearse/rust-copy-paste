@@ -124,6 +124,86 @@ transform = A.Compose([
 ], bbox_params=A.BboxParams(format='albumentations'))
 ```
 
+### Is the library thread-safe? Can I use it with multi-worker DataLoaders?
+
+**Yes!** As of version 1.0, the entire augmentation pipeline is thread-safe. We use `Arc<Mutex>` internally to protect shared state, making it safe for:
+
+- PyTorch `DataLoader` with `num_workers > 0`
+- TensorFlow data loading pipelines
+- Any multi-threaded augmentation workflow
+
+```python
+# Safe to use multiple workers!
+from torch.utils.data import DataLoader
+
+loader = DataLoader(
+    dataset,
+    batch_size=32,
+    num_workers=4,        # Thread-safe ✅
+    persistent_workers=True
+)
+```
+
+**Note:** Versions before 1.0 used `RefCell` which was NOT thread-safe and could cause data corruption.
+
+### Why are my original bounding boxes preserved after v1.0?
+
+This is an intentional change to align with the Albumentations API contract. The `apply_to_bboxes()` function now **merges** new bounding boxes with the original ones instead of replacing them.
+
+**Before v1.0:**
+```python
+original_bboxes = [(0.1, 0.2, 0.3, 0.4, 'person')]
+result = transform(image=img, mask=mask, bboxes=original_bboxes)
+# result['bboxes'] = only new pasted objects (original LOST ❌)
+```
+
+**After v1.0:**
+```python
+original_bboxes = [(0.1, 0.2, 0.3, 0.4, 'person')]
+result = transform(image=img, mask=mask, bboxes=original_bboxes)
+# result['bboxes'] = original + new pasted objects (preserved ✅)
+```
+
+**If you need only pasted objects:**
+```python
+result = transform(image=img, mask=mask, bboxes=original_bboxes)
+new_objects_only = result['bboxes'][len(original_bboxes):]
+```
+
+See the [Migration Guide](migration-v1.md) for more details.
+
+### Why am I getting ValueError for inputs that worked before?
+
+We've significantly improved input validation in v1.0 to catch errors early and provide clear feedback instead of cryptic Rust panics or silent failures.
+
+**Common validation errors:**
+
+```python
+# Dimensions must be positive
+ValueError: Image dimensions must be > 0
+
+# Channel counts must be correct
+ValueError: Image must have 3 channels (BGR format)
+ValueError: Mask must have 1 channel
+
+# Dimensions must match
+ValueError: Image dimensions (512, 512) must match mask dimensions (256, 256)
+
+# object_counts must be valid
+ValueError: object_counts['person'] must be non-negative integer, got -1
+```
+
+**What this means:**
+- The library now validates ALL inputs before processing
+- You'll get specific error messages pointing to the exact problem
+- No more silent failures or crashes deep in Rust code
+
+**How to fix:**
+- Read the error message carefully - it tells you exactly what's wrong
+- Ensure image and mask dimensions match
+- Check that image_width and image_height are positive
+- Verify all object_counts values are non-negative integers
+
 ## Performance Questions
 
 ### How much slower is copy-paste augmentation?

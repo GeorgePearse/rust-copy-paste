@@ -2,6 +2,12 @@
 
 Get started with copy-paste augmentation in 5 minutes.
 
+!!! warning "Breaking Change in v1.x"
+    **Upgrading from v0.x?** The `apply_to_bboxes()` behavior has changed. It now **merges** new bounding boxes with original ones instead of replacing them. This ensures proper Albumentations API compliance. See the [Migration Guide](../migration-v1.md) for details.
+
+!!! success "Thread-Safe for Multi-Worker DataLoaders"
+    As of v1.x, the augmentation pipeline is fully thread-safe. You can safely use it with PyTorch `DataLoader(num_workers > 0)` or any multi-threaded data loading pipeline without risk of data corruption.
+
 ## Basic Usage
 
 ### 1. Install the package
@@ -175,9 +181,11 @@ transform = CopyPasteAugmentation(
 
 ## Performance Tips
 
-1. **Batch Processing**: Use DataLoader with multiple workers
+1. **Batch Processing**: Use DataLoader with multiple workers (now thread-safe!)
 ```python
-loader = DataLoader(dataset, batch_size=32, num_workers=4)
+# Safe to use multiple workers - no data corruption
+loader = DataLoader(dataset, batch_size=32, num_workers=4,
+                   persistent_workers=True)
 ```
 
 2. **Probability Control**: Adjust `p` to balance speed vs augmentation
