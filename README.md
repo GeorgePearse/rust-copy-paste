@@ -17,50 +17,31 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 ## Visual Examples
 
-See the copy-paste augmentation in action with our test dataset. Each example shows 2-3 objects extracted from different source images, with each object receiving independent random transformations (rotation ±180°, scaling 0.85-1.25x, random positioning).
+See the copy-paste augmentation in action with our test dataset. Each example shows the original image (left) and the augmented result with copy-pasted objects (right), demonstrating random transformations including rotation, scaling, and positioning.
 
-### Augmentation with Class Names and Segmentation Masks
+### Augmentation Examples with Segmentation Contours
 
 Each augmented output includes:
-- **Class names** for every pasted object (triangle, circle, square)
-- **Rotation angles** for each transformation
-- **Segmentation masks** with proper class IDs for semantic segmentation
+- **Yellow segmentation contours** showing the exact mask boundaries of pasted objects
+- **Class labels** identifying each object type
+- **Random transformations** applied to each pasted object
+
+The visualizations below show **Original | Augmented** side-by-side comparisons:
 
 <div align="center">
-<img src="tests/augmented_outputs/readme_legend.png" alt="Segmentation Legend" width="400"/>
-</div>
-
-The visualizations below show (left to right): **Original Augmented | Annotated with Labels | Segmentation Mask**
-
-<div align="center">
-<img src="tests/augmented_outputs/readme_showcase_000.png" alt="Example 1" width="900"/>
-<br/><i>2 triangles with independent rotations (31° and -122°)</i>
+<img src="tests/augmented_outputs/labeled/triangle_comparison.png" alt="Triangle Example" width="800"/>
+<br/><i>Triangle copy-paste augmentation with rotation and scaling</i>
 </div>
 
 <div align="center">
-<img src="tests/augmented_outputs/readme_showcase_003.png" alt="Example 2" width="900"/>
-<br/><i>2 circles + 1 triangle with mixed rotations (-107°, -158°, and 21°)</i>
+<img src="tests/augmented_outputs/labeled/circle_comparison.png" alt="Circle Example" width="800"/>
+<br/><i>Circle copy-paste augmentation with random transformations</i>
 </div>
 
 <div align="center">
-<img src="tests/augmented_outputs/readme_showcase_006.png" alt="Example 3" width="900"/>
-<br/><i>2 circles + 1 square showing diverse object types (-4°, 53°, and 120°)</i>
+<img src="tests/augmented_outputs/labeled/square_comparison.png" alt="Square Example" width="800"/>
+<br/><i>Square copy-paste augmentation showing diverse placement</i>
 </div>
-
-### Additional Examples
-
-<table>
-<tr>
-<td align="center"><b>Example 4</b></td>
-<td align="center"><b>Example 5</b></td>
-<td align="center"><b>Example 6</b></td>
-</tr>
-<tr>
-<td><img src="tests/augmented_outputs/augmented_000_v0.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_000_v1.png" width="340"/></td>
-<td><img src="tests/augmented_outputs/augmented_001_v0.png" width="340"/></td>
-</tr>
-</table>
 
 ### Key Features Demonstrated
 

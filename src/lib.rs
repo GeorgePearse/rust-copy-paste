@@ -3,8 +3,8 @@ use numpy::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 mod affine;
 mod blending;
@@ -110,7 +110,7 @@ impl ObjectPaste {
 #[pyclass]
 pub struct CopyPasteTransform {
     config: AugmentationConfig,
-    last_placed: RefCell<Vec<objects::PlacedObject>>,
+    last_placed: Arc<Mutex<Vec<objects::PlacedObject>>>,
 }
 
 #[pymethods]
@@ -142,7 +142,7 @@ impl CopyPasteTransform {
                 use_random_background,
                 blend_mode,
             },
-            last_placed: RefCell::new(Vec::new()),
+            last_placed: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -159,6 +159,7 @@ impl CopyPasteTransform {
         let mask_shape = mask.shape();
         let target_mask_shape = target_mask.shape();
 
+        // Validate tensor rank
         if image_shape.len() != 3 {
             return Err(PyValueError::new_err("image must have shape (H, W, C)"));
         }
@@ -169,6 +170,40 @@ impl CopyPasteTransform {
             return Err(PyValueError::new_err(
                 "target_mask must have shape (H, W, 1)",
             ));
+        }
+
+        // Validate dimensions are positive
+        if image_shape[0] == 0 || image_shape[1] == 0 {
+            return Err(PyValueError::new_err("Image dimensions must be > 0"));
+        }
+
+        // Validate image has 3 channels (BGR format expected)
+        if image_shape[2] != 3 {
+            return Err(PyValueError::new_err(
+                "Image must have 3 channels (BGR format)",
+            ));
+        }
+
+        // Validate mask has 1 channel
+        if mask_shape[2] != 1 {
+            return Err(PyValueError::new_err("Mask must have 1 channel"));
+        }
+        if target_mask_shape[2] != 1 {
+            return Err(PyValueError::new_err("Target mask must have 1 channel"));
+        }
+
+        // Validate dimensions match between image and masks
+        if image_shape[0] != mask_shape[0] || image_shape[1] != mask_shape[1] {
+            return Err(PyValueError::new_err(format!(
+                "Image dimensions ({}, {}) must match mask dimensions ({}, {})",
+                image_shape[0], image_shape[1], mask_shape[0], mask_shape[1]
+            )));
+        }
+        if image_shape[0] != target_mask_shape[0] || image_shape[1] != target_mask_shape[1] {
+            return Err(PyValueError::new_err(format!(
+                "Image dimensions ({}, {}) must match target_mask dimensions ({}, {})",
+                image_shape[0], image_shape[1], target_mask_shape[0], target_mask_shape[1]
+            )));
         }
 
         let mut output_image = image.as_array().to_owned();
@@ -215,7 +250,9 @@ impl CopyPasteTransform {
             placed_objects
         });
 
-        self.last_placed.replace(placed_objects.clone());
+        // Thread-safe storage of placed objects for apply_to_bboxes
+        let mut last_placed_guard = self.last_placed.lock().unwrap();
+        *last_placed_guard = placed_objects;
 
         Ok((
             output_image.into_pyarray_bound(py).unbind(),
@@ -224,28 +261,30 @@ impl CopyPasteTransform {
     }
 
     /// Apply augmentation with bounding boxes (Albumentations format)
+    /// This method now MERGES original bboxes with newly placed object bboxes
     #[allow(clippy::useless_conversion)]
     pub fn apply_to_bboxes(
         &self,
         py: Python<'_>,
         bboxes: PyReadonlyArray1<f32>,
     ) -> PyResult<Py<PyArray1<f32>>> {
-        let placed_objects = self.last_placed.borrow();
+        let placed_objects_guard = self.last_placed.lock().unwrap();
 
-        if placed_objects.is_empty() {
-            // No placement has happened yet; return original input unchanged
-            let bboxes_array = bboxes.as_array().to_owned();
-            return Ok(bboxes_array.into_pyarray_bound(py).unbind());
+        // Start with original bboxes
+        let mut result: Vec<f32> = bboxes.as_array().to_vec();
+
+        // Add new bboxes from placed objects
+        if !placed_objects_guard.is_empty() {
+            let metadata = objects::generate_output_bboxes_with_rotation(&placed_objects_guard);
+            let new_bboxes: Vec<f32> = metadata
+                .iter()
+                .flat_map(|row| row.iter())
+                .copied()
+                .collect();
+            result.extend(new_bboxes);
         }
 
-        let metadata = objects::generate_output_bboxes_with_rotation(&placed_objects);
-        let flat: Vec<f32> = metadata
-            .iter()
-            .flat_map(|row| row.iter())
-            .copied()
-            .collect();
-
-        Ok(PyArray1::from_vec_bound(py, flat).unbind())
+        Ok(PyArray1::from_vec_bound(py, result).unbind())
     }
 
     /// Get configuration

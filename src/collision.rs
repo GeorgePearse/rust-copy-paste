@@ -1,3 +1,11 @@
+//! Collision detection and bounding box operations for copy-paste augmentation.
+//!
+//! This module provides utilities for bounding box operations including:
+//! - IoU (Intersection over Union) calculation
+//! - Collision detection between placed objects
+//! - Bounding box clipping to image boundaries
+//! - Helper functions for intersection and union boxes (used in tests and may be needed for future features)
+
 /// Bounding box represented as (x_min, y_min, x_max, y_max)
 pub type BBox = (f32, f32, f32, f32);
 

@@ -353,3 +353,34 @@ def test_end_to_end_mask_and_bbox_outputs():
     unique_values = set(np.unique(recovered_mask))
     assert {0, 1, 2}.issubset(unique_values)
     assert int(np.sum(recovered_mask > 0)) > 0
+
+
+def test_transform_matches_full_albumentations_interface():
+    """Ensure the transform can run inside an Albumentations Compose pipeline."""
+    image, mask, target_mask = _build_toy_sample()
+
+    pipeline = A.Compose(
+        [
+            CopyPasteAugmentation(
+                image_width=image.shape[1],
+                image_height=image.shape[0],
+                max_paste_objects=1,
+                use_rotation=False,
+                use_scaling=False,
+                p=1.0,
+            )
+        ],
+        bbox_params=A.BboxParams(format="albumentations"),
+        additional_targets={"target_mask": "mask"},
+    )
+
+    result = pipeline(
+        image=image,
+        mask=mask,
+        target_mask=target_mask,
+        bboxes=[],
+    )
+
+    assert result["image"].shape == image.shape
+    assert result["mask"].shape == mask.shape
+    assert result["bboxes"] == []

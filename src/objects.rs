@@ -6,6 +6,9 @@ use ndarray::{s, Array3, ArrayView3};
 use rand::Rng;
 use std::collections::HashMap;
 
+/// Tolerance for floating-point comparison to avoid edge boundary artifacts during interpolation
+const BOUNDARY_EPSILON: f32 = 1e-6;
+
 /// Represents an extracted object from a mask
 #[derive(Clone, Debug)]
 pub struct ExtractedObject {
@@ -35,6 +38,11 @@ pub fn extract_objects_from_mask(
     let mut objects = Vec::new();
     let shape = image.shape();
     let (height, width, _channels) = (shape[0], shape[1], shape[2]);
+
+    // Validate dimensions are positive
+    if height == 0 || width == 0 {
+        return Vec::new();
+    }
 
     // Find all non-zero regions in the mask (we'll treat each connected region as an object)
     // For simplicity, we extract objects based on bounding boxes of non-zero pixels
@@ -85,7 +93,17 @@ fn find_object_bounds(
     // Simple flood fill to find bounds
     let mut stack = vec![(start_x, start_y)];
 
+    // Maximum iterations to prevent infinite loops or DoS attacks
+    // This should be more than enough for any reasonable object
+    let max_iterations = width * height;
+    let mut iterations = 0;
+
     while let Some((x, y)) = stack.pop() {
+        iterations += 1;
+        if iterations > max_iterations {
+            // Early exit if we've exceeded reasonable bounds
+            break;
+        }
         if x >= width || y >= height || visited[y][x] {
             continue;
         }
@@ -226,13 +244,19 @@ pub fn select_objects_by_class(
 
             // Random selection without replacement
             let mut indices: Vec<usize> = (0..objects.len()).collect();
-            for i in 0..count_to_select {
-                let j = i + rng.gen_range(0..(indices.len() - i));
+            // Ensure we don't exceed bounds to prevent panic
+            let safe_count = count_to_select.min(objects.len());
+            for i in 0..safe_count {
+                let remaining = indices.len() - i;
+                if remaining == 0 {
+                    break;
+                }
+                let j = i + rng.gen_range(0..remaining);
                 indices.swap(i, j);
                 selected.push(objects[indices[i]].clone());
             }
 
-            total_selected += count_to_select;
+            total_selected += safe_count;
         }
     } else {
         // Use specified object counts per class
@@ -252,13 +276,19 @@ pub fn select_objects_by_class(
 
                 // Random selection without replacement
                 let mut indices: Vec<usize> = (0..objects.len()).collect();
-                for i in 0..count_to_select {
-                    let j = i + rng.gen_range(0..(indices.len() - i));
+                // Ensure we don't exceed bounds to prevent panic
+                let safe_count = count_to_select.min(objects.len());
+                for i in 0..safe_count {
+                    let remaining = indices.len() - i;
+                    if remaining == 0 {
+                        break;
+                    }
+                    let j = i + rng.gen_range(0..remaining);
                     indices.swap(i, j);
                     selected.push(objects[indices[i]].clone());
                 }
 
-                total_selected += count_to_select;
+                total_selected += safe_count;
             }
         }
     }
@@ -321,31 +351,23 @@ fn transform_patch(
         (width as f32 - center_x, height as f32 - center_y),
     ];
 
-    let transformed_corners: Vec<(f32, f32)> = corners
-        .iter()
-        .map(|&(x, y)| {
-            let new_x = scale * (cos_a * x - sin_a * y);
-            let new_y = scale * (sin_a * x + cos_a * y);
-            (new_x, new_y)
-        })
-        .collect();
+    // Transform corners and calculate bbox in a single pass for efficiency
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
 
-    let min_x = transformed_corners
-        .iter()
-        .map(|p| p.0)
-        .fold(f32::INFINITY, f32::min);
-    let min_y = transformed_corners
-        .iter()
-        .map(|p| p.1)
-        .fold(f32::INFINITY, f32::min);
-    let max_x = transformed_corners
-        .iter()
-        .map(|p| p.0)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let max_y = transformed_corners
-        .iter()
-        .map(|p| p.1)
-        .fold(f32::NEG_INFINITY, f32::max);
+    for &(x, y) in &corners {
+        let new_x = scale * (cos_a * x - sin_a * y);
+        let new_y = scale * (sin_a * x + cos_a * y);
+        min_x = min_x.min(new_x);
+        max_x = max_x.max(new_x);
+        min_y = min_y.min(new_y);
+        max_y = max_y.max(new_y);
+    }
+
+    // Assert that corners is not empty (should always have 4 corners)
+    assert!(!corners.is_empty(), "Corners array should never be empty");
 
     let new_width = ((max_x - min_x).ceil() as usize).max(1);
     let new_height = ((max_y - min_y).ceil() as usize).max(1);
@@ -354,7 +376,11 @@ fn transform_patch(
     let mut output_mask = Array3::zeros((new_height, new_width, channels));
 
     // Inverse transformation parameters
-    let scale_inv = if scale > 1e-6 { 1.0 / scale } else { 1.0 };
+    let scale_inv = if scale > BOUNDARY_EPSILON {
+        1.0 / scale
+    } else {
+        1.0
+    };
     let cos_a_inv = cos_a;
     let sin_a_inv = -sin_a;
 
@@ -370,11 +396,11 @@ fn transform_patch(
             let src_x = scale_inv * (cos_a_inv * dx - sin_a_inv * dy) + center_x;
             let src_y = scale_inv * (sin_a_inv * dx + cos_a_inv * dy) + center_y;
 
-            // Bilinear interpolation
+            // Bilinear interpolation with boundary tolerance
             if src_x >= 0.0
-                && src_x < (width as f32 - 1e-6)
+                && src_x < (width as f32 - BOUNDARY_EPSILON)
                 && src_y >= 0.0
-                && src_y < (height as f32 - 1e-6)
+                && src_y < (height as f32 - BOUNDARY_EPSILON)
             {
                 let x0 = src_x.floor() as usize;
                 let y0 = src_y.floor() as usize;
@@ -538,7 +564,7 @@ pub fn place_objects(
 
         // Apply rotation and scaling transformation to the patch
         let (mut transformed_image, mut transformed_mask, offset_x, offset_y) =
-            if rotation != 0.0 || (scale - 1.0).abs() > 1e-6 {
+            if rotation != 0.0 || (scale - 1.0).abs() > BOUNDARY_EPSILON {
                 transform_patch(&obj.image, &obj.mask, rotation, scale)
             } else {
                 (

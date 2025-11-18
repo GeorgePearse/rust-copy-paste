@@ -1,3 +1,12 @@
+//! Affine transformation utilities for copy-paste augmentation.
+//!
+//! This module provides helper functions for affine transformations (rotation, scaling, translation).
+//! Currently, the main transformation logic is implemented directly in objects.rs for performance.
+//! This module is kept for:
+//! - Future extensibility (may be needed for more complex transformations)
+//! - Testing and validation of transformation mathematics
+//! - Potential refactoring to centralize transformation logic
+
 use ndarray::Array2;
 use std::f32::consts::PI;
 

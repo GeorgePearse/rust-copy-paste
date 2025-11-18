@@ -77,6 +77,20 @@ class CopyPasteAugmentation(A.DualTransform):
                 "Build with: pip install -e . or maturin develop"
             )
 
+        # Validate input dimensions
+        if image_width <= 0 or image_height <= 0:
+            raise ValueError(
+                f"image_width ({image_width}) and image_height ({image_height}) must be positive integers"
+            )
+
+        # Validate object_counts
+        if object_counts:
+            for class_name, count in object_counts.items():
+                if not isinstance(count, int) or count < 0:
+                    raise ValueError(
+                        f"object_counts['{class_name}'] must be non-negative integer, got {count}"
+                    )
+
         self.image_width = image_width
         self.image_height = image_height
         self.max_paste_objects = max_paste_objects
@@ -125,13 +139,14 @@ class CopyPasteAugmentation(A.DualTransform):
         if "mask" in kwargs:
             self._cached_source_mask = kwargs["mask"]
 
-        # Call parent __call__ which will invoke apply() and apply_to_mask()
-        result = super().__call__(force=force, **kwargs)
-
-        # Clear cache
-        self._cached_source_mask = None
-
-        return result
+        try:
+            # Call parent __call__ which will invoke apply() and apply_to_mask()
+            result = super().__call__(force=force, **kwargs)
+            return result
+        finally:
+            # Always clear cache, even if an exception occurs
+            self._cached_source_mask = None
+            self._last_mask_output = None
 
     def apply(
         self,
@@ -180,10 +195,21 @@ class CopyPasteAugmentation(A.DualTransform):
                 augmented_mask, params.get("mask")
             )
             return augmented_image
-        except Exception as e:
-            logger.warning(f"Rust augmentation failed: {e}, returning original image")
+        except ValueError as e:
+            # Expected errors from validation (bad input format, dimension mismatches)
+            logger.warning(f"Augmentation skipped due to invalid input: {e}")
             self._last_mask_output = None
             return img
+        except RuntimeError as e:
+            # Rust implementation errors (memory issues, processing failures)
+            logger.error(f"Rust augmentation failed: {e}", exc_info=True)
+            self._last_mask_output = None
+            raise
+        except Exception as e:
+            # Unexpected errors - log with full traceback and re-raise
+            logger.error(f"Unexpected error in augmentation: {e}", exc_info=True)
+            self._last_mask_output = None
+            raise
 
     def apply_to_masks(
         self,
@@ -274,11 +300,18 @@ class CopyPasteAugmentation(A.DualTransform):
             result[:, 5] = transformed[:, 5]
 
             return result
-        except Exception as e:
-            logger.warning(
-                f"Bbox transformation failed: {e}, returning original bboxes"
-            )
+        except ValueError as e:
+            # Expected errors (invalid bbox format, dimension issues)
+            logger.warning(f"Bbox transformation skipped due to invalid input: {e}")
             return np.empty((0, 6), dtype=np.float32)
+        except RuntimeError as e:
+            # Rust implementation errors
+            logger.error(f"Bbox transformation failed in Rust: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            # Unexpected errors
+            logger.error(f"Unexpected error in bbox transformation: {e}", exc_info=True)
+            raise
 
     @staticmethod
     def _ensure_uint8(array: np.ndarray) -> np.ndarray:
