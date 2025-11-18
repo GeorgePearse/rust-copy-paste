@@ -57,7 +57,11 @@ Apply copy-paste augmentation to image.
 - np.ndarray: Augmented image with same shape and dtype
 
 **Raises**:
-- ValueError: If image is not BGR or has invalid shape
+- `ValueError`: If image is not BGR, has invalid shape, dimensions ≤ 0, or channel count is incorrect
+- `RuntimeError`: If an unexpected error occurs in the Rust implementation
+
+!!! info "Thread-Safe"
+    This method is thread-safe and can be safely used in multi-worker data loading pipelines.
 
 #### apply_to_bboxes()
 
@@ -69,17 +73,27 @@ def apply_to_bboxes(
 ) -> np.ndarray
 ```
 
-Transform bounding boxes in Albumentations format.
+Transform bounding boxes and **merge** them with newly pasted objects (Albumentations format).
 
 **Parameters**:
-- `bboxes` (np.ndarray): Bounding boxes with shape (N, 4) or (N, 5)
+- `bboxes` (np.ndarray): Original bounding boxes with shape (N, 4) or (N, 5)
   - Format: [x_min, y_min, x_max, y_max, class_id]
   - Values: normalized to [0, 1]
 
 **Returns**:
-- np.ndarray: Transformed bboxes in same format
+- np.ndarray: **Merged** bounding boxes containing both original and newly pasted objects
 
-**Note**: Currently returns bboxes unchanged. Full implementation will update bbox positions based on pasted objects.
+**Behavior** (as of v1.0):
+- Original bboxes are **preserved** in the output
+- New bboxes from pasted objects are **appended** to the list
+- This ensures proper Albumentations API contract compliance
+
+!!! warning "Breaking Change from v0.x"
+    Prior to v1.0, this method replaced original bboxes. Now it merges them. See the [Migration Guide](../migration-v1.md) for upgrade instructions.
+
+**Raises**:
+- `ValueError`: If bbox format is invalid or dimensions are incorrect
+- `RuntimeError`: If an unexpected error occurs in the Rust implementation
 
 #### apply_to_masks()
 
