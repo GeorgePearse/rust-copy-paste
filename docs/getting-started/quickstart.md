@@ -69,6 +69,7 @@ CopyPasteAugmentation(
     image_width=512,           # Output image width
     image_height=512,          # Output image height
     max_paste_objects=3,       # Max objects to paste per image
+    object_counts=None,        # Optional: {'person': 2} to override max_paste_objects
     use_rotation=True,         # Enable random rotation
     use_scaling=True,          # Enable random scaling
     rotation_range=(-30, 30),  # Rotation range in degrees

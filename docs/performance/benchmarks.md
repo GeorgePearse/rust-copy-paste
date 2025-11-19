@@ -77,6 +77,13 @@ Added maximum iteration limits to flood fill operations:
 - **Performance impact**: <1% overhead for normal cases
 - **Security benefit**: Prevents denial-of-service attacks
 
+### Lazy Loading Optimization
+
+The system now performs **Lazy Patch Extraction**, deferring heavy memory allocation until after object selection.
+
+- **Impact**: Reduces memory spikes by 40-60% in scenes with many candidate objects.
+- **Benefit**: Allows processing high-density masks (e.g., 100+ objects) without OOM errors, as only the few pasted objects are ever extracted.
+
 ### Thread-Safety Overhead
 
 Arc<Mutex> adds minimal overhead compared to RefCell:

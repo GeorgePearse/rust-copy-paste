@@ -215,21 +215,22 @@ impl CopyPasteTransform {
         let config = self.config.clone();
 
         let placed_objects = py.allow_threads(|| {
-            let extracted_objects =
-                objects::extract_objects_from_mask(output_image.view(), mask_array.view());
+            // 1. Find candidates (lightweight scanning, no pixel allocation)
+            let candidates = objects::find_object_candidates(mask_array.view());
 
-            let mut objects_by_class: HashMap<u32, Vec<objects::ExtractedObject>> = HashMap::new();
-            for obj in extracted_objects {
-                objects_by_class
-                    .entry(obj.class_id)
-                    .or_insert_with(Vec::new)
-                    .push(obj);
-            }
-
-            let selected_objects = objects::select_objects_by_class(
-                &objects_by_class,
+            // 2. Select specific objects to paste based on counts/probabilities
+            let selected_candidates = objects::select_candidates_by_class(
+                &candidates,
                 &config.object_counts,
                 config.max_paste_objects,
+            );
+
+            // 3. Extract pixels ONLY for the selected objects (heavy allocation)
+            // This significantly reduces memory usage compared to extracting everything first
+            let selected_objects = objects::extract_candidate_patches(
+                output_image.view(),
+                mask_array.view(),
+                &selected_candidates,
             );
 
             let placed_objects = objects::place_objects(

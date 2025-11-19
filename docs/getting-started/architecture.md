@@ -90,6 +90,16 @@ impl CopyPasteTransform {
 6. Update masks and store placed objects (thread-safe)
 7. Generate bounding boxes from placed objects
 
+### Lazy Patch Extraction
+
+To optimize memory usage, the Rust implementation employs a "lazy loading" strategy for object extraction:
+
+1. **Scan**: First, it scans the mask to find all potential object candidates without allocating pixel memory.
+2. **Select**: It selects which objects to paste based on `object_counts` and `max_paste_objects`.
+3. **Extract**: Only then does it allocate memory and extract pixel data *only* for the selected objects.
+
+This "lazy" approach significantly reduces memory pressure, especially when dealing with masks containing many objects (e.g., 50+ persons in a crowd) where only a few are needed for the augmentation.
+
 #### Affine Transformations (`src/affine.rs`)
 
 Handles geometric transformations.

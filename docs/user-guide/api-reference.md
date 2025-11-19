@@ -17,6 +17,7 @@ CopyPasteAugmentation(
     scale_range: tuple[float, float] = (0.8, 1.2),
     use_random_background: bool = False,
     blend_mode: str = "normal",
+    object_counts: Optional[Dict[str, int]] = None,
     p: float = 1.0
 )
 ```
@@ -27,13 +28,14 @@ CopyPasteAugmentation(
 |-----------|------|---------|-------------|
 | `image_width` | int | 512 | Width of output images in pixels |
 | `image_height` | int | 512 | Height of output images in pixels |
-| `max_paste_objects` | int | 1 | Maximum number of objects to paste per image |
+| `max_paste_objects` | int | 1 | Maximum total objects to paste (ignored if object_counts is set) |
 | `use_rotation` | bool | True | Enable random rotation of pasted objects |
 | `use_scaling` | bool | True | Enable random scaling of pasted objects |
 | `rotation_range` | tuple[float, float] | (-30, 30) | Rotation range in degrees [min, max] |
 | `scale_range` | tuple[float, float] | (0.8, 1.2) | Scaling factor range [min, max] |
 | `use_random_background` | bool | False | Generate random background instead of using input |
 | `blend_mode` | str | "normal" | Blending mode: "normal" or "xray" |
+| `object_counts` | dict[str, int] | None | Dictionary mapping class names to exact counts to paste |
 | `p` | float | 1.0 | Probability of applying transform (0.0 to 1.0) |
 
 ### Methods
@@ -151,6 +153,7 @@ image_height: int = 512     # Output height
 
 ```python
 max_paste_objects: int = 1  # Max objects per image
+object_counts: dict = None  # Per-class counts e.g. {'person': 2}
 ```
 
 ### Geometric Transformations

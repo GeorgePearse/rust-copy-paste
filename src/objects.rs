@@ -22,6 +22,158 @@ pub struct ExtractedObject {
     pub class_id: u32,
 }
 
+/// Lightweight metadata for a potential object
+#[derive(Clone, Debug)]
+pub struct ObjectCandidate {
+    pub bbox: (u32, u32, u32, u32),
+    pub class_id: u32,
+}
+
+/// Scan the mask to find all object candidates without extracting pixels.
+/// This is memory efficient for large masks with many objects.
+pub fn find_object_candidates(mask: ArrayView3<'_, u8>) -> Vec<ObjectCandidate> {
+    let shape = mask.shape();
+    let (height, width) = (shape[0], shape[1]);
+
+    // Validate dimensions
+    if height == 0 || width == 0 {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let mut visited = vec![vec![false; width]; height];
+
+    for y in 0..height {
+        for x in 0..width {
+            if mask[[y, x, 0]] > 0 && !visited[y][x] {
+                // Found a new object, extract its bounding box
+                let (x_min, y_min, x_max, y_max) = find_object_bounds(&mask, x, y, &mut visited);
+
+                if x_max > x_min && y_max > y_min {
+                    // Determine class_id (simple heuristic: sample the start pixel)
+                    // A more robust approach would be majority vote, but that requires rescanning.
+                    // For contiguous objects, the start pixel is usually representative.
+                    let class_id = mask[[y, x, 0]] as u32;
+
+                    candidates.push(ObjectCandidate {
+                        bbox: (x_min as u32, y_min as u32, x_max as u32, y_max as u32),
+                        class_id,
+                    });
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
+/// Extract pixels for a specific list of candidates
+pub fn extract_candidate_patches(
+    image: ArrayView3<'_, u8>,
+    mask: ArrayView3<'_, u8>,
+    candidates: &[ObjectCandidate],
+) -> Vec<ExtractedObject> {
+    candidates
+        .iter()
+        .filter_map(|cand| {
+            extract_object_patch(
+                &image,
+                &mask,
+                cand.bbox.0,
+                cand.bbox.1,
+                cand.bbox.2,
+                cand.bbox.3,
+            )
+        })
+        .collect()
+}
+
+/// Select candidates based on class counts
+pub fn select_candidates_by_class(
+    candidates: &[ObjectCandidate],
+    object_counts: &HashMap<u32, f32>,
+    max_paste_objects: u32,
+) -> Vec<ObjectCandidate> {
+    if max_paste_objects == 0 {
+        return Vec::new();
+    }
+
+    // Group by class
+    let mut by_class: HashMap<u32, Vec<ObjectCandidate>> = HashMap::new();
+    for cand in candidates {
+        by_class
+            .entry(cand.class_id)
+            .or_insert_with(Vec::new)
+            .push(cand.clone());
+    }
+
+    let mut selected = Vec::new();
+    let mut rng = rand::thread_rng();
+    let mut total_selected = 0usize;
+    let global_cap = max_paste_objects as usize;
+
+    // Logic mirrors select_objects_by_class
+    if object_counts.is_empty() {
+        for (_class_id, items) in by_class.iter() {
+            if total_selected >= global_cap {
+                break;
+            }
+            let remaining_global = global_cap - total_selected;
+            let count_to_select = items.len().min(remaining_global);
+            if count_to_select == 0 {
+                continue;
+            }
+
+            let mut indices: Vec<usize> = (0..items.len()).collect();
+            let safe_count = count_to_select.min(items.len());
+            for i in 0..safe_count {
+                let remaining = indices.len() - i;
+                if remaining == 0 { break; }
+                let j = i + rng.gen_range(0..remaining);
+                indices.swap(i, j);
+                selected.push(items[indices[i]].clone());
+            }
+            total_selected += safe_count;
+        }
+    } else {
+        for (class_id, value) in object_counts.iter() {
+            if total_selected >= global_cap { break; }
+
+            if let Some(items) = by_class.get(class_id) {
+                let actual_count = if *value >= 1.0 {
+                    (*value).round() as usize
+                } else if *value > 0.0 && *value < 1.0 {
+                    if rng.gen::<f32>() < *value { 1 } else { 0 }
+                } else {
+                    0
+                };
+
+                if actual_count == 0 { continue; }
+
+                let remaining_global = global_cap - total_selected;
+                let per_class_cap = actual_count.min(items.len());
+                let count_to_select = per_class_cap.min(remaining_global);
+
+                if count_to_select == 0 { continue; }
+
+                let mut indices: Vec<usize> = (0..items.len()).collect();
+                let safe_count = count_to_select.min(items.len());
+                for i in 0..safe_count {
+                    let remaining = indices.len() - i;
+                    if remaining == 0 { break; }
+                    let j = i + rng.gen_range(0..remaining);
+                    indices.swap(i, j);
+                    selected.push(items[indices[i]].clone());
+                }
+                total_selected += safe_count;
+            }
+        }
+    }
+
+    selected
+}
+
+
 /// Extract all objects from a mask where each unique non-zero value is an object
 ///
 /// # Arguments
@@ -35,44 +187,9 @@ pub fn extract_objects_from_mask(
     image: ArrayView3<'_, u8>,
     mask: ArrayView3<'_, u8>,
 ) -> Vec<ExtractedObject> {
-    let mut objects = Vec::new();
-    let shape = image.shape();
-    let (height, width, _channels) = (shape[0], shape[1], shape[2]);
-
-    // Validate dimensions are positive
-    if height == 0 || width == 0 {
-        return Vec::new();
-    }
-
-    // Find all non-zero regions in the mask (we'll treat each connected region as an object)
-    // For simplicity, we extract objects based on bounding boxes of non-zero pixels
-
-    let mut visited = vec![vec![false; width]; height];
-
-    for y in 0..height {
-        for x in 0..width {
-            if mask[[y, x, 0]] > 0 && !visited[y][x] {
-                // Found a new object, extract its bounding box
-                let (x_min, y_min, x_max, y_max) = find_object_bounds(&mask, x, y, &mut visited);
-
-                if x_max > x_min && y_max > y_min {
-                    // Extract the patch
-                    if let Some(obj) = extract_object_patch(
-                        &image,
-                        &mask,
-                        x_min as u32,
-                        y_min as u32,
-                        x_max as u32,
-                        y_max as u32,
-                    ) {
-                        objects.push(obj);
-                    }
-                }
-            }
-        }
-    }
-
-    objects
+    // Optimized implementation using the split workflow
+    let candidates = find_object_candidates(mask);
+    extract_candidate_patches(image, mask, &candidates)
 }
 
 /// Find the bounding box of an object starting from a point

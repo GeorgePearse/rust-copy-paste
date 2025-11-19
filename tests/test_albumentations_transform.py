@@ -383,4 +383,5 @@ def test_transform_matches_full_albumentations_interface():
 
     assert result["image"].shape == image.shape
     assert result["mask"].shape == mask.shape
-    assert result["bboxes"] == []
+    # With max_paste_objects=1 and p=1.0, we expect 1 pasted object bbox
+    assert len(result["bboxes"]) == 1

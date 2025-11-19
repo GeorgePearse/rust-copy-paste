@@ -36,17 +36,19 @@ CopyPasteAugmentation(image_width=1024, image_height=1024)
 
 ### Object Count
 
-Balance augmentation diversity with speed:
+Balance augmentation diversity with speed. You can control the global maximum or specify exact counts per class.
 
 ```python
-# Conservative - subtle augmentation
-CopyPasteAugmentation(max_paste_objects=1, p=0.3)
+# Global limit (random classes)
+CopyPasteAugmentation(max_paste_objects=3)
 
-# Moderate - good balance
-CopyPasteAugmentation(max_paste_objects=3, p=0.5)
-
-# Aggressive - strong augmentation
-CopyPasteAugmentation(max_paste_objects=5, p=0.7)
+# Per-class control (Overrides max_paste_objects)
+CopyPasteAugmentation(
+    object_counts={
+        'person': 2,  # Exactly 2 people
+        'car': 1      # Exactly 1 car
+    }
+)
 ```
 
 ### Geometric Transformations
