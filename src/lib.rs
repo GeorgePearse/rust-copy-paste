@@ -10,6 +10,7 @@ mod affine;
 mod blending;
 mod collision;
 mod objects;
+mod placement;
 
 /// Python module for copy-paste augmentation (_core submodule)
 #[pymodule]
@@ -110,7 +111,7 @@ impl ObjectPaste {
 #[pyclass]
 pub struct CopyPasteTransform {
     config: AugmentationConfig,
-    last_placed: Arc<Mutex<Vec<objects::PlacedObject>>>,
+    last_placed: Arc<Mutex<Vec<placement::PlacedObject>>>,
 }
 
 #[pymethods]
@@ -233,7 +234,7 @@ impl CopyPasteTransform {
                 &selected_candidates,
             );
 
-            let placed_objects = objects::place_objects(
+            let placed_objects = placement::place_objects(
                 &selected_objects,
                 width,
                 height,
@@ -245,8 +246,8 @@ impl CopyPasteTransform {
             );
 
             let blend_mode = blending::BlendMode::from_string(&config.blend_mode);
-            objects::compose_objects(&mut output_image, &placed_objects, blend_mode);
-            objects::update_output_mask(&mut output_mask, &placed_objects);
+            placement::compose_objects(&mut output_image, &placed_objects, blend_mode);
+            placement::update_output_mask(&mut output_mask, &placed_objects);
 
             placed_objects
         });
@@ -276,7 +277,7 @@ impl CopyPasteTransform {
 
         // Add new bboxes from placed objects
         if !placed_objects_guard.is_empty() {
-            let metadata = objects::generate_output_bboxes_with_rotation(&placed_objects_guard);
+            let metadata = placement::generate_output_bboxes_with_rotation(&placed_objects_guard);
             let new_bboxes: Vec<f32> = metadata
                 .iter()
                 .flat_map(|row| row.iter())

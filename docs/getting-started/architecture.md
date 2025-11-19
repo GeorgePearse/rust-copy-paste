@@ -27,6 +27,8 @@ Copy-Paste Augmentation is built with a layered architecture:
 ┌──────────────────▼──────────────────────┐
 │  Rust Core Layer (src/)                 │
 │  ├─ CopyPasteTransform (lib.rs)         │
+│  ├─ Object Extraction (objects.rs)      │
+│  ├─ Object Placement (placement.rs)     │
 │  ├─ Affine Transformations (affine.rs)  │
 │  ├─ Image Blending (blending.rs)        │
 │  └─ Collision Detection (collision.rs)  │
@@ -66,7 +68,7 @@ use std::sync::{Arc, Mutex};
 pub struct CopyPasteTransform {
     config: AugmentationConfig,
     // Thread-safe shared mutable state
-    last_placed: Arc<Mutex<Vec<objects::PlacedObject>>>,
+    last_placed: Arc<Mutex<Vec<placement::PlacedObject>>>,
 }
 
 impl CopyPasteTransform {
@@ -82,38 +84,41 @@ impl CopyPasteTransform {
 - Replaced `RefCell` (v0.x) with `Arc<Mutex>` (v1.x) to prevent data races
 
 **Algorithm**:
-1. Extract objects from source masks
-2. Select random objects based on `max_paste_objects`
-3. Apply affine transformations (rotation, scaling)
-4. Check collisions using IoU
-5. Blend selected objects onto target image
-6. Update masks and store placed objects (thread-safe)
-7. Generate bounding boxes from placed objects
+1. **Extract** objects from source masks (using `objects.rs`)
+2. **Select** random objects based on `max_paste_objects`
+3. **Place** objects (using `placement.rs`):
+    - Determine random positions
+    - Apply affine transformations (parallelized)
+    - Check collisions
+4. **Blend** selected objects onto target image
+5. Update masks and store placed objects (thread-safe)
+6. Generate bounding boxes from placed objects
 
-### Lazy Patch Extraction
+### Module Responsibilities
 
-To optimize memory usage, the Rust implementation employs a "lazy loading" strategy for object extraction:
+#### Object Extraction (`src/objects.rs`)
 
-1. **Scan**: First, it scans the mask to find all potential object candidates without allocating pixel memory.
-2. **Select**: It selects which objects to paste based on `object_counts` and `max_paste_objects`.
-3. **Extract**: Only then does it allocate memory and extract pixel data *only* for the selected objects.
+Responsible for scanning masks and extracting object data.
+- **Optimized Scanning**: Uses a flattened `Vec<bool>` for efficient flood-fill algorithms, improving CPU cache locality.
+- **Lazy Extraction**: Scans for candidates first, then extracts pixels only for selected objects.
 
-This "lazy" approach significantly reduces memory pressure, especially when dealing with masks containing many objects (e.g., 50+ persons in a crowd) where only a few are needed for the augmentation.
+#### Object Placement (`src/placement.rs`)
+
+Handles the logic for positioning objects onto the target canvas.
+- **Randomization**: Selects random coordinates, rotation, and scaling factors.
+- **Collision Detection**: Orchestrates the check to ensure objects do not overlap excessively.
+- **Composition**: Calls into blending functions to paste objects.
 
 #### Affine Transformations (`src/affine.rs`)
 
-Handles geometric transformations.
+Handles geometric transformations with high performance.
 
-**Features**:
-- Rotation (custom angle range)
-- Scaling (custom scale range)
-- Translation (automatic positioning)
-- Inverse transformations for coordinate mapping
+**Parallel Processing**:
+- Uses **Rayon** to parallelize the transformation loop.
+- Each row of pixels is processed concurrently, significantly speeding up the bilinear interpolation step on multi-core processors.
 
 **Key Functions**:
-- `create_affine_matrix()` - Build transformation matrix
-- `apply_affine_transform()` - Transform points
-- `invert_affine()` - Get inverse transformation
+- `transform_patch()`: Rotates and scales image patches using parallel execution.
 
 #### Image Blending (`src/blending.rs`)
 
@@ -156,12 +161,13 @@ Input: {image, bboxes, masks}
   ├─ Prepare Rust inputs
   ↓
 [Rust Core]
-  ├─ Extract objects from masks
-  ├─ Sample random objects
-  ├─ Apply transformations
-  ├─ Check collisions
-  ├─ Blend images
-  ├─ Update masks
+  ├─ objects::find_object_candidates (Scan)
+  ├─ objects::select_candidates_by_class (Select)
+  ├─ objects::extract_candidate_patches (Extract)
+  ├─ placement::place_objects (Transform & Place)
+  │    └─ affine::transform_patch (Parallelized)
+  ├─ placement::compose_objects (Blend)
+  ├─ placement::update_output_mask
   ↓
 [Python Wrapper]
   ├─ Convert coordinates back to normalized

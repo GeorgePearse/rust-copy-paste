@@ -10,7 +10,7 @@ This package provides the `CopyPasteAugmentation` transform, which implements a 
 
 - Extract objects from source images using mask-based detection
 - Paste objects onto target images with per-class count control
-- Apply random rotations, scaling, and blending
+- Apply random rotations, scaling, and blending **(parallelized with Rayon)**
 - Detect and prevent object collisions using IoU-based collision detection
 - Support multiple blending modes (normal, x-ray)
 - Work seamlessly with Albumentations
