@@ -59,6 +59,29 @@ pub fn blend_images(
     result
 }
 
+/// Blend two pixels using integer arithmetic for performance
+#[inline(always)]
+pub fn blend_pixel_fast(base: u8, overlay: u8, alpha: u8, mode: BlendMode) -> u8 {
+    match mode {
+        BlendMode::Normal => {
+            let alpha = u16::from(alpha);
+            let inv_alpha = 255 - alpha;
+            let base = u16::from(base);
+            let overlay = u16::from(overlay);
+            // Integer blending: (base * (255 - alpha) + overlay * alpha) / 255
+            ((base * inv_alpha + overlay * alpha) / 255) as u8
+        }
+        BlendMode::XRay => {
+            let alpha = u16::from(alpha);
+            let base = u16::from(base);
+            let overlay = u16::from(overlay);
+            // XRay: base + overlay * alpha
+            let added = base + (overlay * alpha) / 255;
+            added.min(255) as u8
+        }
+    }
+}
+
 /// Blend two pixels
 pub fn blend_pixel(base: u8, overlay: u8, alpha: f32, mode: BlendMode) -> u8 {
     match mode {

@@ -61,6 +61,7 @@ htmlcov/
 
 # Benchmarks
 benchmarks/.benchmarks/
+benchmarks/cache_test/
 *.json.bak
 *.prof
 

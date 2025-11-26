@@ -74,14 +74,27 @@ pub fn transform_patch(
     let cos_a_inv = cos_a;
     let sin_a_inv = -sin_a;
 
-    // We process rows in parallel using Rayon
-    // Create vectors of rows to allow parallel iteration and construction
-    let rows: Vec<(Vec<u8>, Vec<u8>)> = (0..new_height)
-        .into_par_iter()
-        .map(|y| {
-            let mut row_img = Vec::with_capacity(new_width * channels);
-            let mut row_mask = Vec::with_capacity(new_width * channels);
+    // Create output arrays
+    let mut output_image = Array3::zeros((new_height, new_width, channels));
+    let mut output_mask = Array3::zeros((new_height, new_width, channels));
 
+    // Ensure we can get mutable slices (should be contiguous by default)
+    // We use expect here because we just created them, so they must be contiguous
+    let img_slice = output_image
+        .as_slice_mut()
+        .expect("Created array should be contiguous");
+    let mask_slice = output_mask
+        .as_slice_mut()
+        .expect("Created array should be contiguous");
+
+    let row_len = new_width * channels;
+
+    // Process rows in parallel writing directly to output arrays
+    img_slice
+        .par_chunks_mut(row_len)
+        .zip(mask_slice.par_chunks_mut(row_len))
+        .enumerate()
+        .for_each(|(y, (row_img, row_mask))| {
             for x in 0..new_width {
                 let out_x = (x as f32) + min_x;
                 let out_y = (y as f32) + min_y;
@@ -106,59 +119,52 @@ pub fn transform_patch(
                     let fx = src_x - x0 as f32;
                     let fy = src_y - y0 as f32;
 
+                    // Compute weights once
+                    let w00 = (1.0 - fx) * (1.0 - fy);
+                    let w10 = fx * (1.0 - fy);
+                    let w01 = (1.0 - fx) * fy;
+                    let w11 = fx * fy;
+
+                    let pixel_offset = x * channels;
+
                     for c in 0..channels {
-                        let v00 = f32::from(patch[[y0, x0, c]]);
-                        let v10 = f32::from(patch[[y0, x1, c]]);
-                        let v01 = f32::from(patch[[y1, x0, c]]);
-                        let v11 = f32::from(patch[[y1, x1, c]]);
+                        // Use unchecked access for speed since indices are clamped
+                        // Safety: x0, y0, x1, y1 are clamped to valid ranges above
+                        let (v00, v10, v01, v11) = unsafe {
+                            (
+                                f32::from(*patch.uget((y0, x0, c))),
+                                f32::from(*patch.uget((y0, x1, c))),
+                                f32::from(*patch.uget((y1, x0, c))),
+                                f32::from(*patch.uget((y1, x1, c))),
+                            )
+                        };
 
-                        let v0 = v00 * (1.0 - fx) + v10 * fx;
-                        let v1 = v01 * (1.0 - fx) + v11 * fx;
-                        let v = v0 * (1.0 - fy) + v1 * fy;
+                        let v = v00 * w00 + v10 * w10 + v01 * w01 + v11 * w11;
+                        row_img[pixel_offset + c] = v.round().clamp(0.0, 255.0) as u8;
 
-                        row_img.push(v.round().clamp(0.0, 255.0) as u8);
+                        // Mask interpolation
+                        let (m00, m10, m01, m11) = unsafe {
+                            (
+                                f32::from(*mask.uget((y0, x0, c))),
+                                f32::from(*mask.uget((y0, x1, c))),
+                                f32::from(*mask.uget((y1, x0, c))),
+                                f32::from(*mask.uget((y1, x1, c))),
+                            )
+                        };
 
-                        // Same for mask
-                        let m00 = f32::from(mask[[y0, x0, c]]);
-                        let m10 = f32::from(mask[[y0, x1, c]]);
-                        let m01 = f32::from(mask[[y1, x0, c]]);
-                        let m11 = f32::from(mask[[y1, x1, c]]);
-
-                        let m0 = m00 * (1.0 - fx) + m10 * fx;
-                        let m1 = m01 * (1.0 - fx) + m11 * fx;
-                        let m = m0 * (1.0 - fy) + m1 * fy;
-
-                        row_mask.push((m.round().clamp(0.0, 255.0) as u8).max(if m > 127.5 { 255 } else { 0 }));
+                        let m = m00 * w00 + m10 * w10 + m01 * w01 + m11 * w11;
+                        row_mask[pixel_offset + c] =
+                            (m.round().clamp(0.0, 255.0) as u8).max(if m > 127.5 { 255 } else { 0 });
                     }
                 } else {
                     // Outside bounds - transparent/black
-                    for _ in 0..channels {
-                        row_img.push(0);
-                        row_mask.push(0);
-                    }
+                    // Since array is zeros, we don't need to write 0 explicitly!
+                    // But we might need to if we didn't init with zeros.
+                    // We did init with zeros. So we can just skip!
+                    // Optimization: Do nothing.
                 }
             }
-            (row_img, row_mask)
-        })
-        .collect();
-
-    // Reassemble the rows into Array3
-    let mut output_image = Array3::zeros((new_height, new_width, channels));
-    let mut output_mask = Array3::zeros((new_height, new_width, channels));
-
-    // This part is sequential but fast (memory copy)
-    for (y, (row_img, row_mask)) in rows.into_iter().enumerate() {
-        // We can't easily slice-assign Vec to ArrayViewMut, so we copy element-wise or use from_vec if careful
-        // Manual copy is safe and relatively fast for these sizes
-        let mut idx = 0;
-        for x in 0..new_width {
-            for c in 0..channels {
-                output_image[[y, x, c]] = row_img[idx];
-                output_mask[[y, x, c]] = row_mask[idx];
-                idx += 1;
-            }
-        }
-    }
+        });
 
     (output_image, output_mask, min_x, min_y)
 }

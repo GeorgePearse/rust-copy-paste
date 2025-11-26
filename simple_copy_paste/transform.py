@@ -7,7 +7,7 @@ import numpy as np
 from loguru import logger
 
 try:
-    from simple_copy_paste._core import CopyPasteTransform  # type: ignore[import-untyped]
+    from simple_copy_paste._core import CopyPasteTransform, precache_coco_objects  # type: ignore[import-untyped]
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -69,40 +69,30 @@ class CopyPasteAugmentation(A.DualTransform):
         class_list: Optional[List[str]] = None,
         annotation_file: Optional[str] = None,
         images_root: Optional[str] = None,
+        cache_dir: Optional[str] = None,
         p: float = 1.0,
     ):
         """Initialize the CopyPasteAugmentation transform."""
         super().__init__(p=p)
 
         if not RUST_AVAILABLE:
-            raise RuntimeError(
-                "Rust implementation not available. "
-                "Build with: pip install -e . or maturin develop"
-            )
+            raise RuntimeError("Rust implementation not available. Build with: pip install -e . or maturin develop")
 
         # Validate input dimensions
         if image_width <= 0 or image_height <= 0:
-            raise ValueError(
-                f"image_width ({image_width}) and image_height ({image_height}) must be positive integers"
-            )
+            raise ValueError(f"image_width ({image_width}) and image_height ({image_height}) must be positive integers")
 
         # Validate ranges
         if len(rotation_range) != 2:
-            raise ValueError(
-                f"rotation_range must have exactly 2 elements (min, max), got {len(rotation_range)}"
-            )
+            raise ValueError(f"rotation_range must have exactly 2 elements (min, max), got {len(rotation_range)}")
         if len(scale_range) != 2:
-            raise ValueError(
-                f"scale_range must have exactly 2 elements (min, max), got {len(scale_range)}"
-            )
+            raise ValueError(f"scale_range must have exactly 2 elements (min, max), got {len(scale_range)}")
 
         # Validate object_counts
         if object_counts:
             for class_name, count in object_counts.items():
                 if not isinstance(count, (int, float)) or count < 0:
-                    raise ValueError(
-                        f"object_counts['{class_name}'] must be non-negative number, got {count}"
-                    )
+                    raise ValueError(f"object_counts['{class_name}'] must be non-negative number, got {count}")
 
         self.image_width = image_width
         self.image_height = image_height
@@ -132,6 +122,7 @@ class CopyPasteAugmentation(A.DualTransform):
             if annotation_file:
                 import json
                 from pathlib import Path
+
                 try:
                     with open(annotation_file) as f:
                         coco_data = json.load(f)
@@ -146,9 +137,7 @@ class CopyPasteAugmentation(A.DualTransform):
             elif self.mm_class_list:
                 # Fallback: use mm_class_list indices (may cause mismatches!)
                 name_to_id = {name: i for i, name in enumerate(self.mm_class_list)}
-                logger.warning(
-                    "No annotation_file provided. Using mm_class_list indices which may not match COCO IDs!"
-                )
+                logger.warning("No annotation_file provided. Using mm_class_list indices which may not match COCO IDs!")
 
             for k, v in self.object_counts.items():
                 class_id = None
@@ -165,9 +154,7 @@ class CopyPasteAugmentation(A.DualTransform):
                 if class_id is not None:
                     rust_object_counts[class_id] = float(v)
                 else:
-                    logger.warning(
-                        f"Could not map class '{k}' to an ID. Skipping in object_counts."
-                    )
+                    logger.warning(f"Could not map class '{k}' to an ID. Skipping in object_counts.")
 
         # Initialize Rust transform
         self.rust_transform = CopyPasteTransform(
@@ -230,16 +217,10 @@ class CopyPasteAugmentation(A.DualTransform):
         Returns:
             Augmented image
         """
-        logger.debug(
-            f"apply() called with image shape {img.shape}, params keys: {list(params.keys())}"
-        )
+        logger.debug(f"apply() called with image shape {img.shape}, params keys: {list(params.keys())}")
         # Convert to uint8 if needed
         if img.dtype != np.uint8:
-            img = (
-                (img * 255).astype(np.uint8)
-                if img.max() <= 1.0
-                else img.astype(np.uint8)
-            )
+            img = (img * 255).astype(np.uint8) if img.max() <= 1.0 else img.astype(np.uint8)
 
         # Ensure image is BGR
         if img.ndim != 3 or img.shape[2] != 3:
@@ -249,24 +230,18 @@ class CopyPasteAugmentation(A.DualTransform):
         try:
             # Use cached mask (set in __call__) or fallback to params
             source_mask = self._prepare_mask(
-                self._cached_source_mask
-                if self._cached_source_mask is not None
-                else params.get("mask"),
+                self._cached_source_mask if self._cached_source_mask is not None else params.get("mask"),
                 img.shape[0],
                 img.shape[1],
             )
-            target_mask = self._prepare_mask(
-                params.get("target_mask"), img.shape[0], img.shape[1]
-            )
+            target_mask = self._prepare_mask(params.get("target_mask"), img.shape[0], img.shape[1])
 
             augmented_image, augmented_mask = self.rust_transform.apply(
                 np.ascontiguousarray(img),
                 source_mask,
                 target_mask,
             )
-            self._last_mask_output = self._normalize_mask_output(
-                augmented_mask, params.get("mask")
-            )
+            self._last_mask_output = self._normalize_mask_output(augmented_mask, params.get("mask"))
             return augmented_image
         except ValueError as e:
             # Expected errors from validation (bad input format, dimension mismatches)
@@ -340,25 +315,19 @@ class CopyPasteAugmentation(A.DualTransform):
         """
         # Validate input format if not empty
         if len(bboxes) > 0 and bboxes.shape[1] < 4:
-            raise ValueError(
-                f"Bboxes must have at least 4 columns [x_min, y_min, x_max, y_max], got {bboxes.shape}"
-            )
+            raise ValueError(f"Bboxes must have at least 4 columns [x_min, y_min, x_max, y_max], got {bboxes.shape}")
 
         # For copy-paste: bboxes are generated from the placed objects inside Rust
         # and now include rotation metadata.
         try:
-            transformed = self.rust_transform.apply_to_bboxes(
-                bboxes.astype(np.float32).ravel()
-            )
+            transformed = self.rust_transform.apply_to_bboxes(bboxes.astype(np.float32).ravel())
 
             transformed = np.asarray(transformed, dtype=np.float32)
             if transformed.size == 0:
                 return np.empty((0, 6), dtype=np.float32)
 
             if transformed.size % 6 != 0:
-                raise ValueError(
-                    "Unexpected bbox metadata size returned from Rust—expected multiples of 6"
-                )
+                raise ValueError("Unexpected bbox metadata size returned from Rust—expected multiples of 6")
 
             transformed = transformed.reshape((-1, 6))
 
@@ -395,9 +364,7 @@ class CopyPasteAugmentation(A.DualTransform):
         return array.astype(np.uint8)
 
     @staticmethod
-    def _prepare_mask(
-        mask: Optional[np.ndarray], height: int, width: int
-    ) -> np.ndarray:
+    def _prepare_mask(mask: Optional[np.ndarray], height: int, width: int) -> np.ndarray:
         if mask is None:
             return np.zeros((height, width, 1), dtype=np.uint8)
 
@@ -420,9 +387,7 @@ class CopyPasteAugmentation(A.DualTransform):
         return np.ascontiguousarray(mask_uint8)
 
     @staticmethod
-    def _normalize_mask_output(
-        mask: np.ndarray, fallback: Optional[np.ndarray]
-    ) -> Optional[np.ndarray]:
+    def _normalize_mask_output(mask: np.ndarray, fallback: Optional[np.ndarray]) -> Optional[np.ndarray]:
         mask = np.asarray(mask)
         if mask.ndim == 3 and mask.shape[2] == 1:
             return mask[..., 0].astype(np.uint8)
@@ -434,9 +399,7 @@ class CopyPasteAugmentation(A.DualTransform):
         return None
 
     @staticmethod
-    def _resize_mask_if_needed(
-        mask: np.ndarray, target_shape: tuple[int, int]
-    ) -> np.ndarray:
+    def _resize_mask_if_needed(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
         if mask.shape == target_shape:
             return mask
 
@@ -467,7 +430,32 @@ class CopyPasteAugmentation(A.DualTransform):
             "class_list",
             "annotation_file",
             "images_root",
+            "cache_dir",
             "p",
+        )
+
+    @staticmethod
+    def precache(
+        annotation_file: str,
+        cache_dir: str,
+        images_root: Optional[str] = None,
+        class_list: Optional[List[str]] = None,
+        max_objects_per_class: Optional[int] = None,
+    ) -> None:
+        """Pre-cache objects from the annotation file to the cache directory.
+
+        This should be called once before training starts to significantly speed up
+        object loading during augmentation.
+        """
+        if not RUST_AVAILABLE:
+            raise RuntimeError("Rust implementation not available.")
+
+        precache_coco_objects(
+            annotation_file,
+            cache_dir,
+            images_root,
+            class_list,
+            max_objects_per_class,
         )
 
 

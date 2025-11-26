@@ -1,11 +1,13 @@
 /// COCO dataset loader for copy-paste augmentation
 /// Loads objects directly from COCO annotation files
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use image::GenericImageView;
 
 use crate::objects::SourceObject;
 
@@ -322,6 +324,88 @@ impl CocoObjectBank {
             category_map,
             name_to_id,
         })
+    }
+
+    /// Pre-cache all objects to disk by cropping them from source images
+    pub fn precache_objects(&mut self, cache_dir: impl AsRef<Path>) -> Result<(), String> {
+        let cache_dir = cache_dir.as_ref();
+        std::fs::create_dir_all(cache_dir)
+            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+
+        let total_objects: usize = self.objects.values().map(|v| v.len()).sum();
+        println!("Caching {} objects to {:?}...", total_objects, cache_dir);
+
+        let pb = ProgressBar::new(total_objects as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} ({eta}) {msg}")
+                .unwrap()
+                .progress_chars("=>-"),
+        );
+
+        // Parallelize over categories
+        self.objects.par_iter_mut().try_for_each(|(cat_id, objects)| -> Result<(), String> {
+            // Sort objects by image path to minimize IO (grouping)
+            objects.sort_by(|a, b| a.image_path.cmp(&b.image_path));
+
+            let mut current_path = PathBuf::new();
+            let mut current_image: Option<image::DynamicImage> = None;
+
+            for obj in objects.iter_mut() {
+                // Load image if needed
+                if obj.image_path != current_path {
+                    match image::open(&obj.image_path) {
+                        Ok(img) => {
+                            current_image = Some(img);
+                            current_path = obj.image_path.clone();
+                        }
+                        Err(e) => {
+                            pb.println(format!("Warning: Failed to load {:?}: {}", obj.image_path, e));
+                            current_image = None;
+                            current_path = PathBuf::new();
+                        }
+                    }
+                }
+
+                if let Some(ref img) = current_image {
+                    let (x, y, w, h) = obj.bbox;
+                    
+                    // Calculate safe bounds
+                    let (img_w, img_h) = img.dimensions();
+                    let x_safe = x.min(img_w.saturating_sub(1));
+                    let y_safe = y.min(img_h.saturating_sub(1));
+                    let w_safe = w.min(img_w - x_safe);
+                    let h_safe = h.min(img_h - y_safe);
+
+                    if w_safe > 0 && h_safe > 0 {
+                        // Generate cache path
+                        let file_stem = obj.image_path.file_stem().unwrap_or_default().to_string_lossy();
+                        let cache_filename = format!("{}_{}_{}_{}_{}.png", *cat_id, file_stem, x, y, w);
+                        let cache_path = cache_dir.join(cache_filename);
+
+                        // Save crop if not exists
+                        if !cache_path.exists() {
+                            let crop = img.view(x_safe, y_safe, w_safe, h_safe).to_image();
+                            if let Err(e) = crop.save(&cache_path) {
+                                pb.println(format!("Failed to save cache {:?}: {}", cache_path, e));
+                            }
+                        }
+
+                        // Update object to point to cache
+                        // Only if file exists (either we just saved it or it was there)
+                        if cache_path.exists() {
+                            obj.image_path = cache_path;
+                            obj.bbox = (0, 0, w_safe, h_safe);
+                        }
+                    }
+                }
+                pb.inc(1);
+            }
+            Ok(())
+        })?;
+
+        pb.finish_with_message("Caching complete");
+        Ok(())
     }
 
     /// Get all objects for a specific class

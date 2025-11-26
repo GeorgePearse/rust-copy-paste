@@ -6,6 +6,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 mod affine;
 mod blending;
@@ -19,7 +20,37 @@ mod placement;
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CopyPasteTransform>()?;
     m.add_class::<ObjectPaste>()?;
+    m.add_function(wrap_pyfunction!(precache_coco_objects, m)?)?;
     Ok(())
+}
+
+/// Pre-cache objects to disk
+#[pyfunction]
+#[pyo3(signature = (annotation_file, cache_dir, images_root=None, class_filter=None, max_objects_per_class=None))]
+#[allow(clippy::too_many_arguments)]
+pub fn precache_coco_objects(
+    annotation_file: String,
+    cache_dir: String,
+    images_root: Option<String>,
+    class_filter: Option<Vec<String>>,
+    max_objects_per_class: Option<usize>,
+) -> PyResult<()> {
+    match coco_loader::CocoObjectBank::from_file(
+        &annotation_file,
+        images_root.as_ref(),
+        class_filter.as_deref(),
+        max_objects_per_class,
+    ) {
+        Ok(mut bank) => {
+            if let Err(e) = bank.precache_objects(&cache_dir) {
+                return Err(PyValueError::new_err(format!("Caching failed: {e}")));
+            }
+            Ok(())
+        }
+        Err(e) => Err(PyValueError::new_err(format!(
+            "Failed to load annotations: {e}"
+        ))),
+    }
 }
 
 /// Configuration for a copy-paste augmentation operation
@@ -129,7 +160,7 @@ impl CopyPasteTransform {
         clippy::missing_errors_doc,
         clippy::needless_pass_by_value
     )]
-    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, use_random_background, blend_mode, object_counts=None, rotation_range=None, scale_range=None, annotation_file=None, images_root=None, class_filter=None, max_objects_per_class=None))]
+    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, use_random_background, blend_mode, object_counts=None, rotation_range=None, scale_range=None, annotation_file=None, images_root=None, class_filter=None, max_objects_per_class=None, cache_dir=None))]
     pub fn new(
         image_width: u32,
         image_height: u32,
@@ -145,6 +176,7 @@ impl CopyPasteTransform {
         images_root: Option<String>,
         class_filter: Option<Vec<String>>,
         max_objects_per_class: Option<usize>,
+        cache_dir: Option<String>,
     ) -> PyResult<Self> {
         // Load COCO objects if annotation file is provided
         let object_bank = if let Some(ann_file) = annotation_file {
@@ -154,7 +186,15 @@ impl CopyPasteTransform {
                 class_filter.as_deref(),
                 max_objects_per_class,
             ) {
-                Ok(bank) => Some(Arc::new(bank.into_objects())),
+                Ok(mut bank) => {
+                    if let Some(cache_path) = cache_dir {
+                        println!("Precaching objects to {}...", cache_path);
+                        if let Err(e) = bank.precache_objects(cache_path) {
+                            eprintln!("Warning: Object caching failed: {}", e);
+                        }
+                    }
+                    Some(Arc::new(bank.into_objects()))
+                },
                 Err(e) => {
                     return Err(PyValueError::new_err(format!(
                         "Failed to load COCO annotations: {e}"
@@ -183,15 +223,6 @@ impl CopyPasteTransform {
         })
     }
 
-    /// Apply copy-paste augmentation to image and masks
-    #[allow(
-        clippy::useless_conversion,
-        clippy::missing_panics_doc,
-        clippy::missing_errors_doc,
-        clippy::type_complexity,
-        clippy::needless_pass_by_value,
-        clippy::cast_possible_truncation
-    )]
     pub fn apply(
         &self,
         py: Python<'_>,
