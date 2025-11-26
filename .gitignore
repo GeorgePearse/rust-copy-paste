@@ -61,7 +61,9 @@ htmlcov/
 
 # Benchmarks
 benchmarks/.benchmarks/
+benchmarks/cache_test/
 *.json.bak
+*.prof
 
 # Generated example outputs
 examples/visual_outputs/pipeline_stages/

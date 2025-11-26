@@ -1,3 +1,4 @@
+#![allow(clippy::useless_conversion)]
 use numpy::{
     IntoPyArray, PyArray1, PyArray3, PyReadonlyArray1, PyReadonlyArray3, PyUntypedArrayMethods,
 };
@@ -5,9 +6,11 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 mod affine;
 mod blending;
+mod coco_loader;
 mod collision;
 mod objects;
 mod placement;
@@ -17,7 +20,37 @@ mod placement;
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CopyPasteTransform>()?;
     m.add_class::<ObjectPaste>()?;
+    m.add_function(wrap_pyfunction!(precache_coco_objects, m)?)?;
     Ok(())
+}
+
+/// Pre-cache objects to disk
+#[pyfunction]
+#[pyo3(signature = (annotation_file, cache_dir, images_root=None, class_filter=None, max_objects_per_class=None))]
+#[allow(clippy::too_many_arguments)]
+pub fn precache_coco_objects(
+    annotation_file: String,
+    cache_dir: String,
+    images_root: Option<String>,
+    class_filter: Option<Vec<String>>,
+    max_objects_per_class: Option<usize>,
+) -> PyResult<()> {
+    match coco_loader::CocoObjectBank::from_file(
+        &annotation_file,
+        images_root.as_ref(),
+        class_filter.as_deref(),
+        max_objects_per_class,
+    ) {
+        Ok(mut bank) => {
+            if let Err(e) = bank.precache_objects(&cache_dir) {
+                return Err(PyValueError::new_err(format!("Caching failed: {e}")));
+            }
+            Ok(())
+        }
+        Err(e) => Err(PyValueError::new_err(format!(
+            "Failed to load annotations: {e}"
+        ))),
+    }
 }
 
 /// Configuration for a copy-paste augmentation operation
@@ -49,6 +82,8 @@ pub struct AugmentationConfig {
 #[pymethods]
 impl AugmentationConfig {
     #[new]
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, rotation_range, scale_range, use_random_background, blend_mode, object_counts=None))]
     pub fn new(
         image_width: u32,
@@ -96,6 +131,7 @@ pub struct ObjectPaste {
 #[pymethods]
 impl ObjectPaste {
     #[new]
+    #[must_use]
     pub fn new(x: f32, y: f32, scale: f32, rotation: f32, class_id: u32) -> Self {
         ObjectPaste {
             x,
@@ -112,12 +148,19 @@ impl ObjectPaste {
 pub struct CopyPasteTransform {
     config: AugmentationConfig,
     last_placed: Arc<Mutex<Vec<placement::PlacedObject>>>,
+    /// Optional pre-loaded object bank from COCO annotations
+    object_bank: Option<Arc<HashMap<u32, Vec<objects::SourceObject>>>>,
 }
 
 #[pymethods]
 impl CopyPasteTransform {
     #[new]
-    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, use_random_background, blend_mode, object_counts=None, rotation_range=None, scale_range=None))]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::missing_errors_doc,
+        clippy::needless_pass_by_value
+    )]
+    #[pyo3(signature = (image_width, image_height, max_paste_objects, use_rotation, use_scaling, use_random_background, blend_mode, object_counts=None, rotation_range=None, scale_range=None, annotation_file=None, images_root=None, class_filter=None, max_objects_per_class=None, cache_dir=None))]
     pub fn new(
         image_width: u32,
         image_height: u32,
@@ -129,8 +172,40 @@ impl CopyPasteTransform {
         object_counts: Option<HashMap<u32, f32>>,
         rotation_range: Option<(f32, f32)>,
         scale_range: Option<(f32, f32)>,
-    ) -> Self {
-        CopyPasteTransform {
+        annotation_file: Option<String>,
+        images_root: Option<String>,
+        class_filter: Option<Vec<String>>,
+        max_objects_per_class: Option<usize>,
+        cache_dir: Option<String>,
+    ) -> PyResult<Self> {
+        // Load COCO objects if annotation file is provided
+        let object_bank = if let Some(ann_file) = annotation_file {
+            match coco_loader::CocoObjectBank::from_file(
+                &ann_file,
+                images_root.as_ref(),
+                class_filter.as_deref(),
+                max_objects_per_class,
+            ) {
+                Ok(mut bank) => {
+                    if let Some(cache_path) = cache_dir {
+                        println!("Precaching objects to {}...", cache_path);
+                        if let Err(e) = bank.precache_objects(cache_path) {
+                            eprintln!("Warning: Object caching failed: {}", e);
+                        }
+                    }
+                    Some(Arc::new(bank.into_objects()))
+                },
+                Err(e) => {
+                    return Err(PyValueError::new_err(format!(
+                        "Failed to load COCO annotations: {e}"
+                    )))
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(CopyPasteTransform {
             config: AugmentationConfig {
                 image_width,
                 image_height,
@@ -144,11 +219,10 @@ impl CopyPasteTransform {
                 blend_mode,
             },
             last_placed: Arc::new(Mutex::new(Vec::new())),
-        }
+            object_bank,
+        })
     }
 
-    /// Apply copy-paste augmentation to image and masks
-    #[allow(clippy::useless_conversion)]
     pub fn apply(
         &self,
         py: Python<'_>,
@@ -215,24 +289,48 @@ impl CopyPasteTransform {
         let width = image_shape[1] as u32;
         let config = self.config.clone();
 
+        let object_bank = self.object_bank.clone();
         let placed_objects = py.allow_threads(|| {
-            // 1. Find candidates (lightweight scanning, no pixel allocation)
-            let candidates = objects::find_object_candidates(mask_array.view());
+            // Choose object source: COCO bank or extract from mask
+            let selected_objects = if let Some(bank) = object_bank {
+                // Use pre-loaded objects from COCO annotations
+                let selected_sources = objects::select_objects_from_bank(
+                    &bank,
+                    &config.object_counts,
+                    config.max_paste_objects,
+                );
 
-            // 2. Select specific objects to paste based on counts/probabilities
-            let selected_candidates = objects::select_candidates_by_class(
-                &candidates,
-                &config.object_counts,
-                config.max_paste_objects,
-            );
+                // Load objects on demand
+                selected_sources
+                    .iter()
+                    .filter_map(|src| match src.load() {
+                        Ok(obj) => Some(obj),
+                        Err(e) => {
+                            eprintln!("Failed to load object from {:?}: {}", src.image_path, e);
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                // Extract objects from mask (original behavior)
+                // 1. Find candidates (lightweight scanning, no pixel allocation)
+                let candidates = objects::find_object_candidates(mask_array.view());
 
-            // 3. Extract pixels ONLY for the selected objects (heavy allocation)
-            // This significantly reduces memory usage compared to extracting everything first
-            let selected_objects = objects::extract_candidate_patches(
-                output_image.view(),
-                mask_array.view(),
-                &selected_candidates,
-            );
+                // 2. Select specific objects to paste based on counts/probabilities
+                let selected_candidates = objects::select_candidates_by_class(
+                    &candidates,
+                    &config.object_counts,
+                    config.max_paste_objects,
+                );
+
+                // 3. Extract pixels ONLY for the selected objects (heavy allocation)
+                // This significantly reduces memory usage compared to extracting everything first
+                objects::extract_candidate_patches(
+                    output_image.view(),
+                    mask_array.view(),
+                    &selected_candidates,
+                )
+            };
 
             let placed_objects = placement::place_objects(
                 &selected_objects,
@@ -264,7 +362,14 @@ impl CopyPasteTransform {
 
     /// Apply augmentation with bounding boxes (Albumentations format)
     /// This method now MERGES original bboxes with newly placed object bboxes
-    #[allow(clippy::useless_conversion)]
+    /// Input: 5-column format [`x_min`, `y_min`, `x_max`, `y_max`, `class_id`]
+    /// Output: 6-column format [`x_min`, `y_min`, `x_max`, `y_max`, `class_id`, `rotation_angle`]
+    #[allow(
+        clippy::useless_conversion,
+        clippy::missing_panics_doc,
+        clippy::missing_errors_doc,
+        clippy::needless_pass_by_value
+    )]
     pub fn apply_to_bboxes(
         &self,
         py: Python<'_>,
@@ -272,10 +377,32 @@ impl CopyPasteTransform {
     ) -> PyResult<Py<PyArray1<f32>>> {
         let placed_objects_guard = self.last_placed.lock().unwrap();
 
-        // Start with original bboxes
-        let mut result: Vec<f32> = bboxes.as_array().to_vec();
+        // Convert input bboxes from 5-column to 6-column format
+        // Input: [x_min, y_min, x_max, y_max, class_id] (5 columns)
+        // Output: [x_min, y_min, x_max, y_max, class_id, rotation_angle] (6 columns)
+        let input_array = bboxes.as_array();
+        let mut result: Vec<f32> = Vec::new();
 
-        // Add new bboxes from placed objects
+        // Check if input is in 5-column format (standard Albumentations format)
+        if input_array.len().is_multiple_of(5) && !input_array.is_empty() {
+            // Convert each 5-element bbox to 6-element format by adding rotation_angle=0.0
+            for chunk in input_array.as_slice().unwrap().chunks(5) {
+                result.extend_from_slice(chunk);
+                result.push(0.0); // rotation_angle for existing bboxes
+            }
+        } else if input_array.len().is_multiple_of(6) {
+            // Already in 6-column format or empty, use as-is
+            result = input_array.to_vec();
+        } else if input_array.is_empty() {
+            // Empty input, no conversion needed
+            result = Vec::new();
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                format!("Input bboxes must have size divisible by 5 (Albumentations format) or 6, got {}", input_array.len())
+            ));
+        }
+
+        // Add new bboxes from placed objects (already in 6-column format)
         if !placed_objects_guard.is_empty() {
             let metadata = placement::generate_output_bboxes_with_rotation(&placed_objects_guard);
             let new_bboxes: Vec<f32> = metadata
@@ -286,10 +413,27 @@ impl CopyPasteTransform {
             result.extend(new_bboxes);
         }
 
+        // Log the object counts: before, added, and after
+        if let Ok(logging) = py.import_bound("logging") {
+            let before_count = if input_array.len().is_multiple_of(5) {
+                input_array.len() / 5
+            } else {
+                input_array.len() / 6
+            };
+            let added_count = placed_objects_guard.len();
+            let after_count = result.len() / 6;
+
+            let log_msg = format!(
+                "🦀 Copy-Paste: Before={before_count} | Added={added_count} | After={after_count}"
+            );
+            let _ = logging.call_method1("info", (log_msg,));
+        }
+
         Ok(PyArray1::from_vec_bound(py, result).unbind())
     }
 
     /// Get configuration
+    #[must_use]
     pub fn get_config(&self) -> AugmentationConfig {
         self.config.clone()
     }

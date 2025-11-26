@@ -8,8 +8,8 @@ try:
 except ImportError:
     pytest.skip("albumentations not installed", allow_module_level=True)
 
-from copy_paste import CopyPasteAugmentation, SimpleCopyPaste
-from copy_paste.transform import RUST_AVAILABLE
+from simple_copy_paste import CopyPasteAugmentation, SimpleCopyPaste
+from simple_copy_paste.transform import RUST_AVAILABLE
 
 if not RUST_AVAILABLE:
     pytest.skip(
@@ -98,9 +98,16 @@ def test_apply_basic_image(sample_transform, sample_image):
 
 
 def test_apply_to_bboxes(sample_transform, sample_bboxes):
-    """Test that apply_to_bboxes method works."""
+    """Test that apply_to_bboxes converts 5-column to 6-column format and merges with pasted objects.
+
+    When no objects have been pasted (apply() not called), original bboxes are returned
+    converted to 6-column format with rotation_angle=0.0.
+    """
     result = sample_transform.apply_to_bboxes(sample_bboxes)
-    assert result.shape == (0, 6)
+    # Should return original 2 bboxes converted to 6-column format
+    assert result.shape == (2, 6)
+    # Verify rotation angles are 0 for original bboxes
+    assert np.allclose(result[:, 5], 0.0)
 
 
 def test_apply_to_masks(sample_transform, sample_masks):
@@ -240,6 +247,10 @@ def test_get_transform_init_args_names(sample_transform):
         "use_random_background",
         "blend_mode",
         "object_counts",  # Optional per-class object counts
+        "mm_class_list",  # Detectron2 metadata class list
+        "class_list",  # Class names list
+        "annotation_file",  # COCO annotation file
+        "images_root",  # Custom images directory
         "p",
     }
 

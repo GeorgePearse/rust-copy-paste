@@ -1,13 +1,13 @@
 """Albumentations-compatible copy-paste augmentation using Rust implementation."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import albumentations as A  # type: ignore[import-untyped]
 import numpy as np
 from loguru import logger
 
 try:
-    from copy_paste._core import CopyPasteTransform  # type: ignore[import-untyped]
+    from simple_copy_paste._core import CopyPasteTransform, precache_coco_objects  # type: ignore[import-untyped]
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -35,6 +35,11 @@ class CopyPasteAugmentation(A.DualTransform):
         object_counts: Dictionary mapping class names (str) to exact count of objects
                       to paste per class. Example: {'person': 2, 'car': 1}
                       (default: {})
+        mm_class_list: Optional list of class names to map string keys in object_counts to IDs.
+        class_list: Optional list of classes to use (subset).
+        annotation_file: Optional path to annotation file.
+        images_root: Optional root directory for images. If not provided, defaults to
+                    <annotation_file_parent>/../images/
         p: Probability of applying the transform (0.0 to 1.0) (default: 1.0)
 
     Example:
@@ -59,50 +64,97 @@ class CopyPasteAugmentation(A.DualTransform):
         scale_range: tuple[float, float] = (0.8, 1.2),
         use_random_background: bool = False,
         blend_mode: str = "normal",
-        object_counts: Optional[Dict[str, int]] = None,
+        object_counts: Optional[Dict[str, float]] = None,
+        mm_class_list: Optional[List[str]] = None,
+        class_list: Optional[List[str]] = None,
+        annotation_file: Optional[str] = None,
+        images_root: Optional[str] = None,
+        cache_dir: Optional[str] = None,
         p: float = 1.0,
     ):
-        """Initialize the CopyPasteAugmentation transform.
-
-        Args:
-            object_counts: Optional dict mapping class names (str) to exact number of objects
-                          to paste per class. Example: {'person': 2, 'car': 1}
-                          If None, no per-class count constraint is applied.
-        """
+        """Initialize the CopyPasteAugmentation transform."""
         super().__init__(p=p)
 
         if not RUST_AVAILABLE:
-            raise RuntimeError(
-                "Rust implementation not available. "
-                "Build with: pip install -e . or maturin develop"
-            )
+            raise RuntimeError("Rust implementation not available. Build with: pip install -e . or maturin develop")
 
         # Validate input dimensions
         if image_width <= 0 or image_height <= 0:
-            raise ValueError(
-                f"image_width ({image_width}) and image_height ({image_height}) must be positive integers"
-            )
+            raise ValueError(f"image_width ({image_width}) and image_height ({image_height}) must be positive integers")
+
+        # Validate ranges
+        if len(rotation_range) != 2:
+            raise ValueError(f"rotation_range must have exactly 2 elements (min, max), got {len(rotation_range)}")
+        if len(scale_range) != 2:
+            raise ValueError(f"scale_range must have exactly 2 elements (min, max), got {len(scale_range)}")
 
         # Validate object_counts
         if object_counts:
             for class_name, count in object_counts.items():
                 if not isinstance(count, (int, float)) or count < 0:
-                    raise ValueError(
-                        f"object_counts['{class_name}'] must be non-negative number, got {count}"
-                    )
+                    raise ValueError(f"object_counts['{class_name}'] must be non-negative number, got {count}")
 
         self.image_width = image_width
         self.image_height = image_height
         self.max_paste_objects = max_paste_objects
         self.use_rotation = use_rotation
         self.use_scaling = use_scaling
-        self.rotation_range = rotation_range
-        self.scale_range = scale_range
+        # Convert to tuples to ensure Rust compatibility (JSON/YAML parse to lists)
+        self.rotation_range = tuple(rotation_range) if rotation_range else (-30.0, 30.0)
+        self.scale_range = tuple(scale_range) if scale_range else (0.8, 1.2)
         self.use_random_background = use_random_background
         self.blend_mode = blend_mode
         self.object_counts = object_counts or {}
+        self.mm_class_list = mm_class_list
+        self.class_list = class_list
+        self.annotation_file = annotation_file
+        self.images_root = images_root
         self._last_mask_output: Optional[np.ndarray] = None
         self._cached_source_mask: Optional[np.ndarray] = None
+
+        # Convert object_counts keys to u32 for Rust
+        # CRITICAL: Use actual COCO category IDs from annotation file, not mm_class_list indices!
+        rust_object_counts = {}
+        if self.object_counts:
+            name_to_id = {}
+
+            # If annotation_file is provided, load actual COCO category IDs
+            if annotation_file:
+                import json
+                from pathlib import Path
+
+                try:
+                    with open(annotation_file) as f:
+                        coco_data = json.load(f)
+                    # Build mapping from category name to actual COCO category ID
+                    name_to_id = {cat["name"]: cat["id"] for cat in coco_data.get("categories", [])}
+                    logger.debug(f"Loaded {len(name_to_id)} COCO category mappings from annotation file")
+                except Exception as e:
+                    logger.warning(f"Could not load COCO categories from {annotation_file}: {e}")
+                    # Fallback to mm_class_list indices if COCO loading fails
+                    if self.mm_class_list:
+                        name_to_id = {name: i for i, name in enumerate(self.mm_class_list)}
+            elif self.mm_class_list:
+                # Fallback: use mm_class_list indices (may cause mismatches!)
+                name_to_id = {name: i for i, name in enumerate(self.mm_class_list)}
+                logger.warning("No annotation_file provided. Using mm_class_list indices which may not match COCO IDs!")
+
+            for k, v in self.object_counts.items():
+                class_id = None
+                # Try to find ID from name_to_id mapping (COCO or mm_class_list)
+                if k in name_to_id:
+                    class_id = name_to_id[k]
+                # Try to parse as integer if possible
+                elif isinstance(k, int) or (isinstance(k, str) and k.isdigit()):
+                    class_id = int(k)
+                # Fallback: if key starts with "class", try to parse the number
+                elif isinstance(k, str) and k.startswith("class") and k[5:].isdigit():
+                    class_id = int(k[5:])
+
+                if class_id is not None:
+                    rust_object_counts[class_id] = float(v)
+                else:
+                    logger.warning(f"Could not map class '{k}' to an ID. Skipping in object_counts.")
 
         # Initialize Rust transform
         self.rust_transform = CopyPasteTransform(
@@ -113,9 +165,13 @@ class CopyPasteAugmentation(A.DualTransform):
             use_scaling=use_scaling,
             use_random_background=use_random_background,
             blend_mode=blend_mode,
-            object_counts=self.object_counts if self.object_counts else None,
-            rotation_range=rotation_range,
-            scale_range=scale_range,
+            object_counts=rust_object_counts if rust_object_counts else None,
+            rotation_range=self.rotation_range,
+            scale_range=self.scale_range,
+            annotation_file=annotation_file,
+            images_root=images_root,
+            class_filter=class_list,
+            max_objects_per_class=None,  # Could be made configurable
         )
 
         logger.info(
@@ -161,16 +217,10 @@ class CopyPasteAugmentation(A.DualTransform):
         Returns:
             Augmented image
         """
-        logger.debug(
-            f"apply() called with image shape {img.shape}, params keys: {list(params.keys())}"
-        )
+        logger.debug(f"apply() called with image shape {img.shape}, params keys: {list(params.keys())}")
         # Convert to uint8 if needed
         if img.dtype != np.uint8:
-            img = (
-                (img * 255).astype(np.uint8)
-                if img.max() <= 1.0
-                else img.astype(np.uint8)
-            )
+            img = (img * 255).astype(np.uint8) if img.max() <= 1.0 else img.astype(np.uint8)
 
         # Ensure image is BGR
         if img.ndim != 3 or img.shape[2] != 3:
@@ -180,24 +230,18 @@ class CopyPasteAugmentation(A.DualTransform):
         try:
             # Use cached mask (set in __call__) or fallback to params
             source_mask = self._prepare_mask(
-                self._cached_source_mask
-                if self._cached_source_mask is not None
-                else params.get("mask"),
+                self._cached_source_mask if self._cached_source_mask is not None else params.get("mask"),
                 img.shape[0],
                 img.shape[1],
             )
-            target_mask = self._prepare_mask(
-                params.get("target_mask"), img.shape[0], img.shape[1]
-            )
+            target_mask = self._prepare_mask(params.get("target_mask"), img.shape[0], img.shape[1])
 
             augmented_image, augmented_mask = self.rust_transform.apply(
                 np.ascontiguousarray(img),
                 source_mask,
                 target_mask,
             )
-            self._last_mask_output = self._normalize_mask_output(
-                augmented_mask, params.get("mask")
-            )
+            self._last_mask_output = self._normalize_mask_output(augmented_mask, params.get("mask"))
             return augmented_image
         except ValueError as e:
             # Expected errors from validation (bad input format, dimension mismatches)
@@ -271,25 +315,19 @@ class CopyPasteAugmentation(A.DualTransform):
         """
         # Validate input format if not empty
         if len(bboxes) > 0 and bboxes.shape[1] < 4:
-            raise ValueError(
-                f"Bboxes must have at least 4 columns [x_min, y_min, x_max, y_max], got {bboxes.shape}"
-            )
+            raise ValueError(f"Bboxes must have at least 4 columns [x_min, y_min, x_max, y_max], got {bboxes.shape}")
 
         # For copy-paste: bboxes are generated from the placed objects inside Rust
         # and now include rotation metadata.
         try:
-            transformed = self.rust_transform.apply_to_bboxes(
-                bboxes.astype(np.float32).ravel()
-            )
+            transformed = self.rust_transform.apply_to_bboxes(bboxes.astype(np.float32).ravel())
 
             transformed = np.asarray(transformed, dtype=np.float32)
             if transformed.size == 0:
                 return np.empty((0, 6), dtype=np.float32)
 
             if transformed.size % 6 != 0:
-                raise ValueError(
-                    "Unexpected bbox metadata size returned from Rust—expected multiples of 6"
-                )
+                raise ValueError("Unexpected bbox metadata size returned from Rust—expected multiples of 6")
 
             transformed = transformed.reshape((-1, 6))
 
@@ -325,13 +363,12 @@ class CopyPasteAugmentation(A.DualTransform):
             return (array * 255).astype(np.uint8)
         return array.astype(np.uint8)
 
-    def _prepare_mask(
-        self, mask: Optional[np.ndarray], height: int, width: int
-    ) -> np.ndarray:
+    @staticmethod
+    def _prepare_mask(mask: Optional[np.ndarray], height: int, width: int) -> np.ndarray:
         if mask is None:
             return np.zeros((height, width, 1), dtype=np.uint8)
 
-        mask_uint8 = self._ensure_uint8(mask)
+        mask_uint8 = CopyPasteAugmentation._ensure_uint8(mask)
 
         if mask_uint8.ndim == 2:
             mask_uint8 = mask_uint8[..., None]
@@ -350,9 +387,7 @@ class CopyPasteAugmentation(A.DualTransform):
         return np.ascontiguousarray(mask_uint8)
 
     @staticmethod
-    def _normalize_mask_output(
-        mask: np.ndarray, fallback: Optional[np.ndarray]
-    ) -> Optional[np.ndarray]:
+    def _normalize_mask_output(mask: np.ndarray, fallback: Optional[np.ndarray]) -> Optional[np.ndarray]:
         mask = np.asarray(mask)
         if mask.ndim == 3 and mask.shape[2] == 1:
             return mask[..., 0].astype(np.uint8)
@@ -364,9 +399,7 @@ class CopyPasteAugmentation(A.DualTransform):
         return None
 
     @staticmethod
-    def _resize_mask_if_needed(
-        mask: np.ndarray, target_shape: tuple[int, int]
-    ) -> np.ndarray:
+    def _resize_mask_if_needed(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
         if mask.shape == target_shape:
             return mask
 
@@ -393,7 +426,36 @@ class CopyPasteAugmentation(A.DualTransform):
             "use_random_background",
             "blend_mode",
             "object_counts",
+            "mm_class_list",
+            "class_list",
+            "annotation_file",
+            "images_root",
+            "cache_dir",
             "p",
+        )
+
+    @staticmethod
+    def precache(
+        annotation_file: str,
+        cache_dir: str,
+        images_root: Optional[str] = None,
+        class_list: Optional[List[str]] = None,
+        max_objects_per_class: Optional[int] = None,
+    ) -> None:
+        """Pre-cache objects from the annotation file to the cache directory.
+
+        This should be called once before training starts to significantly speed up
+        object loading during augmentation.
+        """
+        if not RUST_AVAILABLE:
+            raise RuntimeError("Rust implementation not available.")
+
+        precache_coco_objects(
+            annotation_file,
+            cache_dir,
+            images_root,
+            class_list,
+            max_objects_per_class,
         )
 
 

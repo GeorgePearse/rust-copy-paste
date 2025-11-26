@@ -55,4 +55,4 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
-module-name = "copy_paste._core"
+module-name = "simple_copy_paste._core"

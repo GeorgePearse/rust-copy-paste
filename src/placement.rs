@@ -1,14 +1,14 @@
 use crate::affine::{transform_patch, BOUNDARY_EPSILON};
-use crate::blending::{blend_pixel, BlendMode};
+use crate::blending::{blend_pixel_fast, BlendMode};
 use crate::collision::{check_iou_collision, clip_bbox_to_image};
 use crate::objects::ExtractedObject;
-use ndarray::{s, Array3};
+use ndarray::{s, Array3, ArrayView3};
 use rand::Rng;
 
 /// Represents a placed object with its transformed location
 #[derive(Clone, Debug)]
 pub struct PlacedObject {
-    /// Transformed bbox as (x_min, y_min, x_max, y_max)
+    /// Transformed bbox as (`x_min`, `y_min`, `x_max`, `y_max`)
     pub bbox: (f32, f32, f32, f32),
     /// The transformed image patch
     pub image: Array3<u8>,
@@ -30,11 +30,18 @@ pub struct PlacedObject {
 /// * `use_scaling` - Whether to apply random scaling
 /// * `rotation_range` - (min, max) rotation in degrees
 /// * `scale_range` - (min, max) scale factors
-/// * `collision_threshold` - IoU threshold for collision detection (0.0 = no collision)
+/// * `collision_threshold` - `IoU` threshold for collision detection (0.0 = no collision)
 ///
 /// # Returns
 /// Vector of successfully placed objects with their transformed bboxes
-#[allow(clippy::similar_names)]
+#[allow(
+    clippy::similar_names,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 pub fn place_objects(
     selected_objects: &[ExtractedObject],
     image_width: u32,
@@ -136,28 +143,36 @@ pub fn place_objects(
             continue; // Patch lies completely outside the image
         }
 
-        // Crop the patch to the visible region
-        transformed_image = transformed_image
-            .slice(s![y_start..y_end, x_start..x_end, ..])
-            .to_owned();
-        transformed_mask = transformed_mask
-            .slice(s![y_start..y_end, x_start..x_end, ..])
-            .to_owned();
+        // View of the patch cropped to visible region (no allocation)
+        let visible_mask_view = transformed_mask.slice(s![y_start..y_end, x_start..x_end, ..]);
 
         // Calculate tight bbox from actual mask pixels
-        let tight_bbox = match calculate_tight_bbox_from_mask(&transformed_mask) {
-            Some(bbox) => bbox,
-            None => continue, // No mask pixels found, skip this object
+        let Some(tight_bbox) = calculate_tight_bbox_from_mask(visible_mask_view) else {
+            continue; // No mask pixels found, skip this object
         };
 
         let (tight_x_min, tight_y_min, tight_x_max, tight_y_max) = tight_bbox;
 
-        // Further crop to tight bounds
+        // Calculate final crop indices combining both crops
+        let final_y_start = y_start + tight_y_min;
+        let final_y_end = y_start + tight_y_max;
+        let final_x_start = x_start + tight_x_min;
+        let final_x_end = x_start + tight_x_max;
+
+        // Perform single allocation for the final cropped patch
         transformed_image = transformed_image
-            .slice(s![tight_y_min..tight_y_max, tight_x_min..tight_x_max, ..])
+            .slice(s![
+                final_y_start..final_y_end,
+                final_x_start..final_x_end,
+                ..
+            ])
             .to_owned();
         transformed_mask = transformed_mask
-            .slice(s![tight_y_min..tight_y_max, tight_x_min..tight_x_max, ..])
+            .slice(s![
+                final_y_start..final_y_end,
+                final_x_start..final_x_end,
+                ..
+            ])
             .to_owned();
 
         let tight_width = transformed_image.shape()[1] as f32;
@@ -205,7 +220,7 @@ pub fn place_objects(
 }
 
 /// Calculate tight bounding box from actual mask content
-fn calculate_tight_bbox_from_mask(mask: &Array3<u8>) -> Option<(usize, usize, usize, usize)> {
+fn calculate_tight_bbox_from_mask(mask: ArrayView3<u8>) -> Option<(usize, usize, usize, usize)> {
     let height = mask.shape()[0];
     let width = mask.shape()[1];
 
@@ -240,6 +255,11 @@ fn calculate_tight_bbox_from_mask(mask: &Array3<u8>) -> Option<(usize, usize, us
 }
 
 /// Compose placed objects onto target image with blending
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 pub fn compose_objects(
     output_image: &mut Array3<u8>,
     placed_objects: &[PlacedObject],
@@ -292,14 +312,12 @@ pub fn compose_objects(
                     continue; // Skip transparent pixels
                 }
 
-                let alpha = (mask_value as f32) / 255.0;
-
-                // Blend each channel
+                // Blend each channel using integer arithmetic
                 for c in 0..channels {
                     let base_pixel = output_image[[target_y, target_x, c]];
                     let overlay_pixel = placed_obj.image[[py, px, c]];
 
-                    let blended = blend_pixel(base_pixel, overlay_pixel, alpha, blend_mode);
+                    let blended = blend_pixel_fast(base_pixel, overlay_pixel, mask_value, blend_mode);
                     output_image[[target_y, target_x, c]] = blended;
                 }
             }
@@ -308,6 +326,11 @@ pub fn compose_objects(
 }
 
 /// Update output mask with placed objects
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 pub fn update_output_mask(output_mask: &mut Array3<u8>, placed_objects: &[PlacedObject]) {
     let out_shape = output_mask.shape();
     let (height, width, _channels) = (out_shape[0], out_shape[1], out_shape[2]);
@@ -352,7 +375,7 @@ pub fn update_output_mask(output_mask: &mut Array3<u8>, placed_objects: &[Placed
                 let mask_value = placed_obj.mask[[py, px, 0]];
                 if mask_value > 0 {
                     // Use the class_id as the mask value for this object
-                    output_mask[[target_y, target_x, 0]] = (placed_obj.class_id as u8).min(255);
+                    output_mask[[target_y, target_x, 0]] = placed_obj.class_id.min(255) as u8;
                 }
             }
         }
@@ -362,6 +385,7 @@ pub fn update_output_mask(output_mask: &mut Array3<u8>, placed_objects: &[Placed
 /// Generate axis-aligned bounding boxes along with rotation metadata.
 ///
 /// Each entry is `[x_min, y_min, x_max, y_max, class_id, rotation_deg]`.
+#[allow(clippy::cast_precision_loss)]
 pub fn generate_output_bboxes_with_rotation(placed_objects: &[PlacedObject]) -> Vec<[f32; 6]> {
     placed_objects
         .iter()
