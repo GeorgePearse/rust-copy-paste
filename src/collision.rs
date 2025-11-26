@@ -1,15 +1,15 @@
 //! Collision detection and bounding box operations for copy-paste augmentation.
 //!
 //! This module provides utilities for bounding box operations including:
-//! - IoU (Intersection over Union) calculation
+//! - `IoU` (Intersection over Union) calculation
 //! - Collision detection between placed objects
 //! - Bounding box clipping to image boundaries
 //! - Helper functions for intersection and union boxes (used in tests and may be needed for future features)
 
-/// Bounding box represented as (x_min, y_min, x_max, y_max)
+/// Bounding box represented as (`x_min`, `y_min`, `x_max`, `y_max`)
 pub type BBox = (f32, f32, f32, f32);
 
-/// Calculate Intersection over Union (IoU) between two bounding boxes
+/// Calculate Intersection over Union (`IoU`) between two bounding boxes
 #[allow(clippy::similar_names)]
 pub fn calculate_iou(bbox1: BBox, bbox2: BBox) -> f32 {
     let (x1_min, y1_min, x1_max, y1_max) = bbox1;
@@ -39,7 +39,7 @@ pub fn calculate_iou(bbox1: BBox, bbox2: BBox) -> f32 {
     inter_area / union_area
 }
 
-/// Check if two bounding boxes have collision (IoU > threshold)
+/// Check if two bounding boxes have collision (`IoU` > threshold)
 pub fn check_iou_collision(bbox1: BBox, bbox2: BBox, threshold: f32) -> bool {
     calculate_iou(bbox1, bbox2) > threshold
 }
@@ -77,6 +77,7 @@ pub fn get_union_box(bbox1: BBox, bbox2: BBox) -> BBox {
 }
 
 /// Clip bounding box to be within image bounds
+#[allow(clippy::cast_precision_loss)]
 pub fn clip_bbox_to_image(bbox: BBox, image_width: u32, image_height: u32) -> BBox {
     let (mut x_min, mut y_min, mut x_max, mut y_max) = bbox;
 

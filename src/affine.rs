@@ -15,8 +15,9 @@ pub const BOUNDARY_EPSILON: f32 = 1e-6;
 /// * `scale` - Scale factor
 ///
 /// # Returns
-/// Tuple of (transformed_image, transformed_mask, offset_x, offset_y)
-/// where offset_x/offset_y are the displacement from the patch center
+/// Tuple of (`transformed_image`, `transformed_mask`, `offset_x`, `offset_y`)
+/// where `offset_x`/`offset_y` are the displacement from the patch center
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn transform_patch(
     patch: &Array3<u8>,
     mask: &Array3<u8>,
@@ -106,28 +107,28 @@ pub fn transform_patch(
                     let fy = src_y - y0 as f32;
 
                     for c in 0..channels {
-                        let v00 = patch[[y0, x0, c]] as f32;
-                        let v10 = patch[[y0, x1, c]] as f32;
-                        let v01 = patch[[y1, x0, c]] as f32;
-                        let v11 = patch[[y1, x1, c]] as f32;
+                        let v00 = f32::from(patch[[y0, x0, c]]);
+                        let v10 = f32::from(patch[[y0, x1, c]]);
+                        let v01 = f32::from(patch[[y1, x0, c]]);
+                        let v11 = f32::from(patch[[y1, x1, c]]);
 
                         let v0 = v00 * (1.0 - fx) + v10 * fx;
                         let v1 = v01 * (1.0 - fx) + v11 * fx;
                         let v = v0 * (1.0 - fy) + v1 * fy;
 
-                        row_img.push(v.round() as u8);
+                        row_img.push(v.round().clamp(0.0, 255.0) as u8);
 
                         // Same for mask
-                        let m00 = mask[[y0, x0, c]] as f32;
-                        let m10 = mask[[y0, x1, c]] as f32;
-                        let m01 = mask[[y1, x0, c]] as f32;
-                        let m11 = mask[[y1, x1, c]] as f32;
+                        let m00 = f32::from(mask[[y0, x0, c]]);
+                        let m10 = f32::from(mask[[y0, x1, c]]);
+                        let m01 = f32::from(mask[[y1, x0, c]]);
+                        let m11 = f32::from(mask[[y1, x1, c]]);
 
                         let m0 = m00 * (1.0 - fx) + m10 * fx;
                         let m1 = m01 * (1.0 - fx) + m11 * fx;
                         let m = m0 * (1.0 - fy) + m1 * fy;
 
-                        row_mask.push((m.round() as u8).max(if m > 127.5 { 255 } else { 0 }));
+                        row_mask.push((m.round().clamp(0.0, 255.0) as u8).max(if m > 127.5 { 255 } else { 0 }));
                     }
                 } else {
                     // Outside bounds - transparent/black

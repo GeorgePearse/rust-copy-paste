@@ -3,6 +3,94 @@
 use ndarray::{Array3, ArrayView3};
 use rand::Rng;
 use std::collections::HashMap;
+use std::path::Path;
+
+/// Represents an object source (lazy loading)
+#[derive(Clone, Debug)]
+pub struct SourceObject {
+    /// Path to the source image
+    pub image_path: std::path::PathBuf,
+    /// Bounding box as (`x`, `y`, `w`, `h`) in pixel coordinates
+    pub bbox: (u32, u32, u32, u32),
+    /// Class ID of this object
+    pub class_id: u32,
+}
+
+impl SourceObject {
+    /// Load the object from disk
+    pub fn load(&self) -> Result<ExtractedObject, String> {
+        let image = load_image_as_bgr(&self.image_path)?;
+        let (x, y, w, h) = self.bbox;
+
+        let img_shape = image.shape();
+        let img_h = img_shape[0] as u32;
+        let img_w = img_shape[1] as u32;
+
+        // Re-clamp just in case
+        let x_safe = x.min(img_w.saturating_sub(1));
+        let y_safe = y.min(img_h.saturating_sub(1));
+        let w_safe = w.min(img_w - x_safe);
+        let h_safe = h.min(img_h - y_safe);
+        
+        if w_safe == 0 || h_safe == 0 {
+            return Err("Invalid bbox dimensions after clamping".to_string());
+        }
+
+        // Extract image patch
+        let mut patch_image = Array3::zeros((h_safe as usize, w_safe as usize, 3));
+        for dy in 0..h_safe as usize {
+            for dx in 0..w_safe as usize {
+                let src_y = (y_safe as usize) + dy;
+                let src_x = (x_safe as usize) + dx;
+                if src_y < img_h as usize && src_x < img_w as usize {
+                    for c in 0..3 {
+                        patch_image[[dy, dx, c]] = image[[src_y, src_x, c]];
+                    }
+                }
+            }
+        }
+
+        // Create mask patch (full rectangle for now)
+        let mut patch_mask = Array3::zeros((h_safe as usize, w_safe as usize, 3));
+        for dy in 0..h_safe as usize {
+            for dx in 0..w_safe as usize {
+                for c in 0..3 {
+                    patch_mask[[dy, dx, c]] = 255;
+                }
+            }
+        }
+
+        Ok(ExtractedObject {
+            image: patch_image,
+            mask: patch_mask,
+            bbox: (x_safe, y_safe, x_safe + w_safe, y_safe + h_safe),
+            class_id: self.class_id,
+        })
+    }
+}
+
+/// Load an image as BGR format (OpenCV-compatible)
+#[allow(clippy::cast_possible_truncation)]
+fn load_image_as_bgr(path: impl AsRef<Path>) -> Result<Array3<u8>, String> {
+    let img = image::open(path)
+        .map_err(|e| format!("Failed to open image: {e}"))?;
+
+    let rgb_img = img.to_rgb8();
+    let (width, height) = rgb_img.dimensions();
+
+    // Convert RGB to BGR
+    let mut bgr_array = Array3::zeros((height as usize, width as usize, 3));
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let pixel = rgb_img.get_pixel(x as u32, y as u32);
+            bgr_array[[y, x, 0]] = pixel[2]; // B
+            bgr_array[[y, x, 1]] = pixel[1]; // G
+            bgr_array[[y, x, 2]] = pixel[0]; // R
+        }
+    }
+
+    Ok(bgr_array)
+}
 
 /// Represents an extracted object from a mask
 #[derive(Clone, Debug)]
@@ -11,7 +99,7 @@ pub struct ExtractedObject {
     pub image: Array3<u8>,
     /// The mask for this object (binary)
     pub mask: Array3<u8>,
-    /// Bounding box as (x_min, y_min, x_max, y_max) in pixel coordinates
+    /// Bounding box as (`x_min`, `y_min`, `x_max`, `y_max`) in pixel coordinates
     pub bbox: (u32, u32, u32, u32),
     /// Class ID of this object
     pub class_id: u32,
@@ -26,6 +114,7 @@ pub struct ObjectCandidate {
 
 /// Scan the mask to find all object candidates without extracting pixels.
 /// This is memory efficient for large masks with many objects.
+#[allow(clippy::cast_possible_truncation)]
 pub fn find_object_candidates(mask: ArrayView3<'_, u8>) -> Vec<ObjectCandidate> {
     let shape = mask.shape();
     let (height, width) = (shape[0], shape[1]);
@@ -49,7 +138,7 @@ pub fn find_object_candidates(mask: ArrayView3<'_, u8>) -> Vec<ObjectCandidate> 
 
                 if x_max > x_min && y_max > y_min {
                     // Determine class_id (simple heuristic: sample the start pixel)
-                    let class_id = mask[[y, x, 0]] as u32;
+                    let class_id = u32::from(mask[[y, x, 0]]);
 
                     candidates.push(ObjectCandidate {
                         bbox: (x_min as u32, y_min as u32, x_max as u32, y_max as u32),
@@ -85,6 +174,7 @@ pub fn extract_candidate_patches(
 }
 
 /// Select candidates based on class counts
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn select_candidates_by_class(
     candidates: &[ObjectCandidate],
     object_counts: &HashMap<u32, f32>,
@@ -99,7 +189,7 @@ pub fn select_candidates_by_class(
     for cand in candidates {
         by_class
             .entry(cand.class_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(cand.clone());
     }
 
@@ -109,7 +199,7 @@ pub fn select_candidates_by_class(
     let global_cap = max_paste_objects as usize;
 
     if object_counts.is_empty() {
-        for (_class_id, items) in by_class.iter() {
+        for items in by_class.values() {
             if total_selected >= global_cap {
                 break;
             }
@@ -133,7 +223,7 @@ pub fn select_candidates_by_class(
             total_selected += safe_count;
         }
     } else {
-        for (class_id, value) in object_counts.iter() {
+        for (class_id, value) in object_counts {
             if total_selected >= global_cap {
                 break;
             }
@@ -142,11 +232,7 @@ pub fn select_candidates_by_class(
                 let actual_count = if *value >= 1.0 {
                     (*value).round() as usize
                 } else if *value > 0.0 && *value < 1.0 {
-                    if rng.gen::<f32>() < *value {
-                        1
-                    } else {
-                        0
-                    }
+                    usize::from(rng.gen::<f32>() < *value)
                 } else {
                     0
                 };
@@ -175,6 +261,106 @@ pub fn select_candidates_by_class(
                     selected.push(items[indices[i]].clone());
                 }
                 total_selected += safe_count;
+            }
+        }
+    }
+
+    selected
+}
+
+/// Select objects from a pre-loaded object bank based on class counts
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn select_objects_from_bank<T: Clone>(
+    bank: &HashMap<u32, Vec<T>>,
+    object_counts: &HashMap<u32, f32>,
+    max_paste_objects: u32,
+) -> Vec<T> {
+    if max_paste_objects == 0 {
+        return Vec::new();
+    }
+
+    let mut selected = Vec::new();
+    let mut rng = rand::thread_rng();
+    let mut total_selected = 0usize;
+    let global_cap = max_paste_objects as usize;
+
+    if object_counts.is_empty() {
+        // No specific counts: select randomly from all classes
+        for objects in bank.values() {
+            if total_selected >= global_cap || objects.is_empty() {
+                break;
+            }
+            let remaining_global = global_cap - total_selected;
+            let count_to_select = objects.len().min(remaining_global);
+            if count_to_select == 0 {
+                continue;
+            }
+
+            // Randomly select objects from this class
+            let mut indices: Vec<usize> = (0..objects.len()).collect();
+            for i in 0..count_to_select.min(indices.len()) {
+                let remaining = indices.len() - i;
+                if remaining == 0 {
+                    break;
+                }
+                let j = i + rng.gen_range(0..remaining);
+                indices.swap(i, j);
+                selected.push(objects[indices[i]].clone());
+            }
+            total_selected += count_to_select;
+        }
+    } else {
+        // Specific counts per class
+        for (class_id, value) in object_counts {
+            if total_selected >= global_cap {
+                break;
+            }
+
+            if let Some(objects) = bank.get(class_id) {
+                if objects.is_empty() {
+                    continue;
+                }
+
+                // Determine count: exact count (>=1.0) or probability (0.0-1.0)
+                let actual_count = if *value >= 1.0 {
+                    (*value).round() as usize
+                } else if *value > 0.0 && *value < 1.0 {
+                    usize::from(rng.gen::<f32>() < *value)
+                } else {
+                    0
+                };
+
+                if actual_count == 0 {
+                    continue;
+                }
+
+                let remaining_global = global_cap - total_selected;
+                let per_class_cap = actual_count.min(objects.len());
+                let count_to_select = per_class_cap.min(remaining_global);
+
+                if count_to_select == 0 {
+                    continue;
+                }
+
+                // Randomly select objects from this class
+                let mut indices: Vec<usize> = (0..objects.len()).collect();
+                for i in 0..count_to_select.min(indices.len()) {
+                    let remaining = indices.len() - i;
+                    if remaining == 0 {
+                        break;
+                    }
+                    let j = i + rng.gen_range(0..remaining);
+                    indices.swap(i, j);
+                    // We allow truncation here because class_id comes from u32 and we are just selecting
+                    // But wait, the warning was about class_id = value as u32 in extract_object_patch logic?
+                    // No, warning said src/objects.rs:408:24.
+                    // Line 408 in my previous read was: `class_id = value as u32;` inside `extract_object_patch`!
+                    // Wait, `extract_object_patch` is lines 365-423.
+                    // Let's check `extract_object_patch`.
+                    
+                    selected.push(objects[indices[i]].clone());
+                }
+                total_selected += count_to_select;
             }
         }
     }
@@ -314,7 +500,7 @@ fn extract_object_patch(
 
         if *count > max_count {
             max_count = *count;
-            class_id = value as u32;
+            class_id = u32::try_from(value).unwrap_or(0);
         }
     }
 
